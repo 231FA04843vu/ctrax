@@ -1,0 +1,32 @@
+
+/* stylelint-disable at-rule-no-unknown */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+/* stylelint-enable at-rule-no-unknown */
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+}
+.full-layout {
+  width: 100%;
+  min-height: 100vh;
+  background-color: #f9fafb;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+
+/* Tablet adjustments */
+@media (max-width: 1024px) {
+  .full-layout {
+    padding: 1.5rem;
+  }
+}
+
+/* Mobile adjustments */
+@media (max-width: 640px) {
+  .full-layout {
+    padding: 1rem;
+  }
+}

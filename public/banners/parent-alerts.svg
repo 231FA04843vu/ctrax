@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 700" width="1600" height="700">
+  <defs>
+    <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+  </defs>
+  <rect width="1600" height="700" fill="url(#g2)"/>
+  <!-- map grid -->
+  <g opacity="0.25" stroke="#fff">
+    <path d="M0 140 H1600 M0 280 H1600 M0 420 H1600 M0 560 H1600"/>
+    <path d="M200 0 V700 M400 0 V700 M600 0 V700 M800 0 V700 M1000 0 V700 M1200 0 V700 M1400 0 V700"/>
+  </g>
+  <!-- phone -->
+  <g transform="translate(1080,120)">
+    <rect x="0" y="0" width="340" height="460" rx="32" fill="#0f172a"/>
+    <rect x="24" y="70" width="292" height="330" rx="18" fill="#fff"/>
+    <circle cx="170" cy="36" r="6" fill="#94a3b8"/>
+    <!-- map route inside phone -->
+    <path d="M48 360 C 140 320, 200 300, 270 240" stroke="#10b981" stroke-width="10" fill="none"/>
+    <circle cx="60" cy="360" r="12" fill="#f59e0b"/>
+    <circle cx="270" cy="240" r="12" fill="#ef4444"/>
+  </g>
+  <!-- copy -->
+  <g transform="translate(120,140)">
+    <rect x="0" y="0" width="780" height="120" rx="16" fill="rgba(255,255,255,0.9)"/>
+    <text x="28" y="66" font-family="Inter,Segoe UI,Arial" font-size="44" font-weight="700" fill="#0f172a">Parents stay informed</text>
+    <text x="28" y="102" font-family="Inter,Segoe UI,Arial" font-size="24" fill="#334155">Arrival alerts • Delay notifications</text>
+  </g>
+</svg>
