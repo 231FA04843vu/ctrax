@@ -1,27 +1,44 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { buildRouteForNow, getProgress, haversineKm } from '../utils/routeLogic'
 import { formatMinutes } from '../utils/format'
-import { getBus, onBus } from '../utils/busData'
+import { getBus, onBus, getBusFor, onBusFor } from '../utils/busData'
+import { onStopsFor, onStops } from '../utils/routeData'
+import { computeSimulatedPos } from '../utils/sim'
 
-export default function LiveTimeline(){
-  const [bus, setBus] = useState(getBus())
+export default function LiveTimeline({ busId = null, highlightStopName = '' }){
+  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : getBus())
   const sharing = bus.sharing ?? false
-  const [speed, setSpeed] = useState(bus.speedKmph ?? 30)
+  // Use a single source of truth for speed from simulation or bus config
+  const speed = Math.max(1, Number(bus?.sim?.speedKmph) || Number(bus?.speedKmph) || 30)
+  const [liveTick, setLiveTick] = useState(0)
   useEffect(() => {
+    if (busId){
+      const off = onBusFor(busId, setBus)
+      return off
+    }
     const off = onBus(setBus)
     return off
+  }, [busId])
+  const [stopsTick, setStopsTick] = useState(0)
+  useEffect(() => {
+    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
+    return onStops(() => setStopsTick(t => t + 1))
+  }, [busId])
+  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const ordered = routeNow.orderedStops || []
+  const originPos = ordered[0]?.position
+  // Compute position from DB-driven simulation params; fall back to origin
+  const currentPos = computeSimulatedPos(bus?.sim, ordered.map(s => s.position)) || (originPos || [0,0])
+
+  // Force-refresh every second so distance/ETA update continuously
+  useEffect(() => {
+    const id = setInterval(() => setLiveTick((t) => (t + 1) % 1_000_000), 1000)
+    return () => clearInterval(id)
   }, [])
-  const routeNow = useMemo(() => buildRouteForNow(), [])
-  const ordered = routeNow.orderedStops
   // For timeline rows, exclude the very first origin if present and any terminal vignan (morning)
   const timelineStops = routeNow.timeline
 
-  // Randomize speed every 30s between 10 and 60 km/h
-  useEffect(() => {
-    const tick = () => setSpeed(10 + Math.floor(Math.random() * 51))
-    const id = setInterval(tick, 30000)
-    return () => clearInterval(id)
-  }, [])
+  // (Removed randomization) — keep speed consistent with DB simulation
 
   const fmtIST = (date) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
   const todayAt = (hhmm) => {
@@ -34,7 +51,7 @@ export default function LiveTimeline(){
   const startPlanned = todayAt(routeNow.startTime)
   const now = new Date()
   const rows = timelineStops.map((s, i) => {
-    const distanceKm = haversineKm(bus.position, s.position)
+    const distanceKm = haversineKm(currentPos, s.position)
     const etaMins = Math.max(0, Math.round((distanceKm / speed) * 60))
     const estArrival = new Date(now.getTime() + etaMins * 60000)
     const planned = new Date(startPlanned.getTime() + (s.plannedOffsetMins ?? 0) * 60000)
@@ -56,21 +73,21 @@ export default function LiveTimeline(){
 
   // Determine next and arrived along the ordered route
   // Compute arrived/next with an arrival radius so the dot only turns blue when actually at the stop
-  const prelim = getProgress(bus.position, ordered)
+  const prelim = getProgress(currentPos, ordered)
   const nearestIdx = prelim.arrivedIdx
   const ARRIVAL_RADIUS_KM = 0.08 // ~80 meters
-  const distToNearest = haversineKm(bus.position, ordered[nearestIdx]?.position || ordered[0]?.position)
+  const distToNearest = haversineKm(currentPos, ordered[nearestIdx]?.position || ordered[0]?.position)
   const arrivedIdx = distToNearest <= ARRIVAL_RADIUS_KM ? nearestIdx : Math.max(0, nearestIdx - 1)
   const nextIdx = Math.min(arrivedIdx + 1, ordered.length - 1)
   const arrivedName = ordered[arrivedIdx]?.name
   const startName = ordered[0]?.name
   const nextName = ordered[nextIdx]?.name
   const nextPos = ordered[nextIdx]?.position
-  const distToNext = Math.round(haversineKm(bus.position, nextPos || ordered[ordered.length - 1].position))
+  const distToNext = Math.round(haversineKm(currentPos, nextPos || ordered[ordered.length - 1]?.position || originPos || currentPos))
 
   // Robust departure tracking: mark the moment we leave a stop and show 'left ... ago' from a timestamp
-  const arrivedPos = ordered[arrivedIdx]?.position || ordered[0]?.position
-  const distFromArrivedKm = haversineKm(bus.position, arrivedPos)
+  const arrivedPos = ordered[arrivedIdx]?.position || ordered[0]?.position || originPos || currentPos
+  const distFromArrivedKm = haversineKm(currentPos, arrivedPos)
   const LEFT_THRESHOLD_KM = 0.1 // ~100 meters to consider it "left"
   const hasLeftArrived = distFromArrivedKm > LEFT_THRESHOLD_KM
   const lastDepartedAtRef = useRef(null)
@@ -112,6 +129,8 @@ export default function LiveTimeline(){
   // Find timeline entry matching nextName for highlighting
   const nextRowIdx = rows.findIndex(r => r.name === nextName)
   const next = nextRowIdx >= 0 ? rows[nextRowIdx] : rows[rows.length - 1]
+  const nextEtaMin = Math.max(0, next?.etaMins ?? 0)
+  const nextDistKm = Math.max(0, next?.distanceKm ?? 0)
 
   return (
     <div>
@@ -119,22 +138,22 @@ export default function LiveTimeline(){
         <div className="text-sm font-medium">Live timeline</div>
         {sharing ? (
           <div className="text-xs bg-blue-50 text-blue-800 px-2 py-1 rounded">
-            {arrivedIdx === 0 ? (
-              hasLeftArrived ? (
-                <>
-                  Left <span className="capitalize font-semibold">{startName}</span> {leftLabel || 'just now'}, Next stop <span className="capitalize font-semibold">{nextName}</span> — {`${distToNext} km`}
-                </>
+            <>
+              Next stop <span className="capitalize font-semibold">{nextName}</span> — <span className="font-semibold">{nextEtaMin} min</span> • {`${nextDistKm} km`}
+              {arrivedIdx === 0 ? (
+                hasLeftArrived ? (
+                  <>
+                    {' '}• left <span className="capitalize font-semibold">{startName}</span> {leftLabel || 'just now'}
+                  </>
+                ) : (
+                  <>
+                    {' '}• started at <span className="capitalize font-semibold">{startName}</span>
+                  </>
+                )
               ) : (
-                <>
-                  Started at <span className="capitalize font-semibold">{startName}</span>, Next stop <span className="capitalize font-semibold">{nextName}</span> — {`${distToNext} km`}
-                </>
-              )
-            ) : (
-              <>
-                Arrived <span className="capitalize font-semibold">{arrivedName}</span>, Next stop <span className="capitalize font-semibold">{nextName}</span> — {`${distToNext} km`}
-                {hasLeftArrived && <> • left {leftLabel || 'just now'}</>}
-              </>
-            )}
+                hasLeftArrived && <> • left {leftLabel || 'just now'}</>
+              )}
+            </>
           </div>
         ) : (
           <div className="text-xs bg-orange-50 text-orange-800 px-2 py-1 rounded">
@@ -148,13 +167,15 @@ export default function LiveTimeline(){
         <div className="min-w-max">
           <div className="flex items-center gap-8">
             {rows.map((r, idx) => {
+              const norm = (v) => String(v || '').trim().toLowerCase()
               const isCurrent = r.name === arrivedName
+              const isMine = norm(r.name) === norm(highlightStopName)
               return (
                 <div key={idx} className="flex flex-col items-center">
-                  <div className={`w-3 h-3 rounded-full border ${isCurrent ? 'bg-blue-600 border-blue-600' : 'bg-white border-blue-300'}`} />
+                  <div className={`w-3 h-3 rounded-full border ${isMine ? 'bg-purple-600 border-purple-600' : (isCurrent ? 'bg-blue-600 border-blue-600' : 'bg-white border-blue-300')}`} />
                   <div className={`h-1 w-24 mt-2 ${sharing ? 'bg-blue-200' : 'bg-gray-300'}`} />
                   <div className="mt-2 text-xs text-center">
-                    <div className="capitalize font-medium">{r.name}</div>
+                    <div className="capitalize font-medium">{r.name} {isMine && <span className="ml-1 text-[10px] px-1 py-0.5 rounded bg-purple-100 text-purple-700 align-middle">Your stop</span>}</div>
                     <div className="text-gray-600">Planned {r.planned}</div>
                     <div className={`${sharing ? 'text-gray-800' : 'text-gray-400'}`}>ETA {sharing ? r.eta : '—'}</div>
                   </div>

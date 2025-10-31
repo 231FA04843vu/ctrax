@@ -1,6 +1,7 @@
 import { initializeApp, getApps } from 'firebase/app'
 import { getDatabase } from 'firebase/database'
 import { getAnalytics, isSupported } from 'firebase/analytics'
+import { getAuth, setPersistence, browserLocalPersistence } from 'firebase/auth'
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -14,6 +15,13 @@ const config = {
 
 const app = getApps().length ? getApps()[0] : initializeApp(config)
 export const db = getDatabase(app)
+export const auth = getAuth(app)
+
+// Ensure Firebase Auth keeps the user logged in across reloads in this browser
+try {
+  // This sets the persistence for the current session; it is safe to call multiple times
+  setPersistence(auth, browserLocalPersistence).catch(() => {})
+} catch {}
 
 // Initialize Analytics only in browser and when measurementId is provided
 export let analytics = null
@@ -26,4 +34,4 @@ if (typeof window !== 'undefined' && import.meta.env.VITE_FIREBASE_MEASUREMENT_I
   }).catch(() => {})
 }
 
-export default { db, analytics }
+export default { db, analytics, auth }

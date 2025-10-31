@@ -95,7 +95,7 @@ export default function Account(){
             <div className="text-sm text-gray-600 mb-4">Sign in to start sharing live bus location.</div>
             <div className="flex items-center gap-3">
               <Link to="/login/driver" className="px-3 py-2 bg-indigo-600 text-white rounded">Sign in</Link>
-              <Link to="/register/driver" className="px-3 py-2 border rounded">Create account</Link>
+              <Link to="/register/driver" className="px-3 py-2 border rounded">Apply</Link>
             </div>
           </div>
           <div className="bg-white p-5 rounded shadow">

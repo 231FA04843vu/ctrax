@@ -1,29 +1,60 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { getBus, onBus } from '../utils/busData'
+import { getBus, onBus, getBusFor, onBusFor } from '../utils/busData'
+import { getUsers } from '../utils/auth'
 import { formatMinutes } from '../utils/format'
 import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
+import { onStopsFor, onStops } from '../utils/routeData'
+import { computeSimulatedPos } from '../utils/sim'
 
-export default function BusList(){
-  const [bus, setBus] = useState(getBus())
+export default function BusList({ busId = null, highlightStopName = '' }){
+  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : getBus())
   const sharing = bus.sharing ?? false
-  const [speed, setSpeed] = useState(bus.speedKmph ?? 30)
+  // Use a single source of truth for speed from simulation or bus config
+  const speed = Math.max(1, Number(bus?.sim?.speedKmph) || Number(bus?.speedKmph) || 30)
+  const [liveTick, setLiveTick] = useState(0)
+  const [assignedDriver, setAssignedDriver] = useState(null)
 
   useEffect(() => {
+    if (busId){
+      const off = onBusFor(busId, setBus)
+      return off
+    }
     const off = onBus(setBus)
     return off
-  }, [])
+  }, [busId])
 
-  // Randomize speed every 30s between 10 and 60 km/h
+  // Track assigned driver from users cache so name/phone reflect updates everywhere
   useEffect(() => {
-    const tick = () => setSpeed(10 + Math.floor(Math.random() * 51))
-    const id = setInterval(tick, 30000)
+    const id = setInterval(() => {
+      if (!busId) { setAssignedDriver(null); return }
+      try {
+        const drivers = getUsers('driver') || []
+        const d = drivers.find(x => (x.busNo||'').trim().toLowerCase() === busId.trim().toLowerCase())
+        setAssignedDriver(d || null)
+      } catch { setAssignedDriver(null) }
+    }, 1000)
+    return () => clearInterval(id)
+  }, [busId])
+
+  // (Removed randomization) — keep speed consistent with DB simulation
+
+  // Live refresh so ETAs and distance update while sim runs
+  useEffect(() => {
+    const id = setInterval(() => setLiveTick((t) => (t + 1) % 1_000_000), 1000)
     return () => clearInterval(id)
   }, [])
 
   // Route selection (morning/evening) and helpers
-  const routeNow = useMemo(() => buildRouteForNow(), [])
-  const ordered = routeNow.orderedStops
+  const [stopsTick, setStopsTick] = useState(0)
+  useEffect(() => {
+    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
+    return onStops(() => setStopsTick(t => t + 1))
+  }, [busId])
+  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const ordered = routeNow.orderedStops || []
+  const originPos = ordered[0]?.position
+  const currentPos = computeSimulatedPos(bus?.sim, ordered.map(s => s.position)) || (originPos || [0,0])
   const fmtIST = (date) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
   const todayAt = (hhmm) => {
     const [h, m] = hhmm.split(':').map(Number)
@@ -34,7 +65,7 @@ export default function BusList(){
 
   // Dynamic ETA to final stop based on current speed
   const finalStop = ordered[ordered.length - 1]
-  const distToFinalKm = haversineKm(bus.position, finalStop.position)
+  const distToFinalKm = haversineKm(currentPos, finalStop?.position || originPos || currentPos)
   const etaFinalMins = Math.max(1, Math.round((distToFinalKm / Math.max(1, speed)) * 60))
   const computedBusEta = sharing ? `≈ ${formatMinutes(etaFinalMins)}` : '—'
 
@@ -44,7 +75,7 @@ export default function BusList(){
   // Build rows sequentially so delay propagates from previous arrival
   const rows = []
   let prevEtaTime = new Date(now) // start from 'now'
-  let prevPos = bus.position
+  let prevPos = currentPos
   routeNow.timeline.forEach((s, i) => {
     const distanceKm = haversineKm(prevPos, s.position)
     const travelMins = Math.max(0, Math.round((distanceKm / Math.max(1, speed)) * 60))
@@ -119,16 +150,16 @@ export default function BusList(){
               <span className="text-gray-600">Start</span>
               <span className="font-medium">{routeNow.startPlace} — {fmtIST(todayAt(routeNow.startTime))} IST</span>
             </div>
-            {bus.driverName && (
+            {(assignedDriver?.name || bus.driverName) && (
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">Driver</span>
-                <span className="font-medium">{bus.driverName}</span>
+                <span className="font-medium">{assignedDriver?.name || bus.driverName}</span>
               </div>
             )}
-            {bus.driverPhone && (
+            {(assignedDriver?.phone || bus.driverPhone) && (
               <div className="flex items-center justify-between">
                 <span className="text-gray-600">Phone</span>
-                <span className="font-medium tracking-wide">{bus.driverPhone}</span>
+                <span className="font-medium tracking-wide">{assignedDriver?.phone || bus.driverPhone}</span>
               </div>
             )}
             <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
@@ -148,11 +179,20 @@ export default function BusList(){
               </div>
               <div className="divide-y divide-gray-200 bg-white">
                 {stopRows.map((r, i) => {
+                  const norm = (v) => String(v || '').trim().toLowerCase()
+                  const isMine = norm(r.name) === norm(highlightStopName)
                   const d = r.delayMin
                   const delayClass = !sharing ? 'text-gray-500' : (d > 0 ? 'text-red-600' : d < 0 ? 'text-emerald-600' : 'text-gray-700')
                   return (
-                    <div key={i} className="grid grid-cols-4 text-xs">
-                      <div className="px-2 py-2 capitalize">{r.name}</div>
+                    <div key={i} className={`grid grid-cols-4 text-xs ${isMine ? 'bg-purple-50' : ''}`}>
+                      <div className="px-2 py-2 capitalize">
+                        <div className="leading-tight">{r.name}</div>
+                        {isMine && (
+                          <div className="mt-0.5 text-[10px] inline-block px-1 py-0.5 rounded bg-purple-100 text-purple-700">
+                            Your stop
+                          </div>
+                        )}
+                      </div>
                       <div className="px-2 py-2 text-center">{r.planned}</div>
                       <div className="px-2 py-2 text-center">{r.etaDisplay}</div>
                       <div className={`px-2 py-2 text-center ${delayClass}`}>

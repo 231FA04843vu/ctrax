@@ -4,7 +4,9 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
-import { getBus, onBus, setPosition } from '../utils/busData'
+import { onStopsFor, onStops } from '../utils/routeData'
+import { getBus, onBus, getBusFor, onBusFor, setPosition, setPositionFor, setSimFor } from '../utils/busData'
+import { computeSimulatedPos } from '../utils/sim'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -18,6 +20,23 @@ function FlyTo({ position }) {
   useEffect(() => {
     if (position) map.setView(position, 14, { animate: true })
   }, [position])
+  return null
+}
+
+// Keep the map focused on the route area: fit to bounds and constrain pan/zoom
+function BoundsController({ points }){
+  const map = useMap()
+  useEffect(() => {
+    if (!points || points.length < 2) return
+    try {
+      const bounds = L.latLngBounds(points.map(p => L.latLng(p[0], p[1])))
+      // Fit to route with padding and limit panning outside padded bounds
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 })
+      map.setMaxBounds(bounds.pad(0.25))
+      const minZ = map.getBoundsZoom(bounds, true)
+      if (typeof minZ === 'number' && isFinite(minZ)) map.setMinZoom(minZ)
+    } catch {}
+  }, [points, map])
   return null
 }
 
@@ -63,13 +82,37 @@ const stopIcon = (variant = 'mid') => {
   })
 }
 
-export default function MapView({ role = 'student', sharing = false }) {
-  const [bus, setBus] = useState(getBus())
+export default function MapView({ role = 'student', sharing = false, busId = null, highlightStopName = '' }) {
+
+// Special icon for the student's own stop
+const myStopIcon = () => L.divIcon({
+  className: '',
+  html: `
+    <div style="display:flex;align-items:center;justify-content:center;width:36px;height:36px;filter:drop-shadow(0 1px 3px rgba(0,0,0,0.4))">
+      <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' width='36' height='36'>
+        <circle cx='12' cy='12' r='10' fill='#7c3aed' />
+        <circle cx='12' cy='12' r='10' fill='none' stroke='white' stroke-width='2' opacity='0.95' />
+        <path d='M10 16l-3-3 1.4-1.4L10 13.2l5.6-5.6L17 9l-7 7z' fill='white'/>
+      </svg>
+    </div>
+  `,
+  iconSize: [36, 36],
+  iconAnchor: [18, 18]
+})
+  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : getBus())
+  const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
+    if (busId) {
+      const off = onBusFor(busId, setBus)
+      // also subscribe to per-bus stops to refresh route when they arrive/change
+      const offStops = onStopsFor(busId, () => setStopsTick(t => t + 1))
+      return () => { off(); offStops() }
+    }
     const off = onBus(setBus)
-    return off
-  }, [])
-  const routeNow = useMemo(() => buildRouteForNow(), [])
+    const offGlobalStops = onStops(() => setStopsTick(t => t + 1))
+    return () => { off(); offGlobalStops() }
+  }, [busId])
+  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
   const orderedStops = useMemo(() => routeNow.orderedStops.map(s => s.position), [routeNow])
 
   const [routePoints, setRoutePoints] = useState(orderedStops)
@@ -81,6 +124,7 @@ export default function MapView({ role = 'student', sharing = false }) {
   const dirRef = useRef(1) // 1 forward, -1 backward for continuous simulation
   const startMarkerRef = useRef(null)
   const endMarkerRef = useRef(null)
+  const simTickRef = useRef(null)
 
   // Densify a path so animation looks smoother when falling back to straight segments
   const densifyByKm = (pts, stepKm = 0.12) => {
@@ -104,6 +148,24 @@ export default function MapView({ role = 'student', sharing = false }) {
     let cancelled = false
     async function build() {
       try {
+        if (!orderedStops || orderedStops.length < 2) {
+          // Not enough points to request OSRM; just use given points
+          const pts = orderedStops.length ? [orderedStops[0]] : []
+          if (!cancelled){
+            setRoutePoints(orderedStops)
+            setPos(orderedStops[0])
+            setCenter(orderedStops[0])
+            if (role === 'driver' && busId) {
+              try { setPositionFor(busId, orderedStops[0]) } catch {}
+            } else if (role === 'driver') {
+              try { setPosition(orderedStops[0]) } catch {}
+            }
+            segIndexRef.current = 0
+            segTRef.current = 0
+            dirRef.current = 1
+          }
+          return
+        }
         const coordsParam = orderedStops.map(([lat,lng]) => `${lng},${lat}`).join(';')
         const url = `https://router.project-osrm.org/route/v1/driving/${coordsParam}?overview=full&geometries=geojson&steps=false&continue_straight=true`
         const res = await fetch(url)
@@ -117,7 +179,11 @@ export default function MapView({ role = 'student', sharing = false }) {
           setPos(pts[0])
           setCenter(pts[0])
           if (role === 'driver') {
-            try { setPosition(pts[0]) } catch {}
+            if (busId) {
+              try { setPositionFor(busId, pts[0]) } catch {}
+            } else {
+              try { setPosition(pts[0]) } catch {}
+            }
           }
           segIndexRef.current = 0
           segTRef.current = 0
@@ -130,7 +196,11 @@ export default function MapView({ role = 'student', sharing = false }) {
           setPos(fallback[0])
           setCenter(fallback[0])
           if (role === 'driver') {
-            try { setPosition(fallback[0]) } catch {}
+            if (busId) {
+              try { setPositionFor(busId, fallback[0]) } catch {}
+            } else {
+              try { setPosition(fallback[0]) } catch {}
+            }
           }
           segIndexRef.current = 0
           segTRef.current = 0
@@ -163,88 +233,77 @@ export default function MapView({ role = 'student', sharing = false }) {
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
   }, [])
 
-  // change speed every 30s to keep map movement lively
-  useEffect(() => {
-    const id = setInterval(() => {
-      speedRef.current = 10 + Math.floor(Math.random() * 51)
-    }, 30000)
-    return () => clearInterval(id)
-  }, [])
+  // (Removed local random speed loop) — speed is now driven by DB sim for consistency across views
 
-  // movement along the polyline every 3 seconds
+  // DB-driven continuous simulation: compute position from sim params periodically
   useEffect(() => {
-    if (!routePoints || routePoints.length < 2) return
-    // ensure we start exactly at the origin of the selected route
+    if (!routePoints || routePoints.length < 1) return
+    // initialize to first point for visual stability
     setPos(routePoints[0])
     setCenter(routePoints[0])
-    if (role === 'driver') {
-      try { setPosition(routePoints[0]) } catch {}
-    }
-    segIndexRef.current = 0
-    segTRef.current = 0
-    dirRef.current = 1
-    const stepMs = 3000
-    const move = () => {
-      const canMove = role === 'driver' ? sharing : (bus.sharing ?? false)
-      if (!canMove) return
-      let i = segIndexRef.current
-      const dir = dirRef.current
-      // determine current segment endpoints based on direction
-      const nextIndex = i + (dir > 0 ? 1 : -1)
-      if (nextIndex < 0 || nextIndex >= routePoints.length) {
-        // bounce
-        dirRef.current = -dir
-        return
-      }
-      const a = routePoints[i]
-      const b = routePoints[nextIndex]
-      const segKm = Math.max(0.001, haversineKm(a, b))
-      const kmThisTick = (speedRef.current / 3600) * (stepMs / 1000)
-      const dt = kmThisTick / segKm
-      let t = segTRef.current + dt
-      let idx = i
-      let currentA = a
-      let currentB = b
-      while (t >= 1) {
-        t -= 1
-        const nextIdx = idx + (dirRef.current > 0 ? 1 : -1)
-        if (nextIdx < 0 || nextIdx >= routePoints.length) {
-          // flip and clamp
-          dirRef.current = -dirRef.current
-          break
-        }
-        idx = nextIdx
-        const ni = idx + (dirRef.current > 0 ? 1 : -1)
-        currentA = routePoints[idx]
-        currentB = routePoints[ni] || routePoints[idx]
-      }
-      segIndexRef.current = idx
-      segTRef.current = t
-      const p = lerp(currentA, currentB, t)
+    const stepMs = 1000
+    const tick = () => {
+      const sim = (bus && bus.sim) || null
+      const p = computeSimulatedPos(sim, routePoints) || routePoints[0]
       setPos(p)
       setCenter(p)
-      if (role === 'driver') {
-        try { setPosition(p) } catch {}
-      }
     }
-    const id = setInterval(move, stepMs)
-    return () => clearInterval(id)
-  }, [routePoints, sharing, bus.sharing, role])
+    tick()
+    const id = setInterval(tick, stepMs)
+    simTickRef.current = id
+    return () => { clearInterval(id); simTickRef.current = null }
+  }, [routePoints, bus?.sim])
 
-  // For non-driver roles, follow DB-updated position
+  // Start/pause simulation from sharing toggles (driver prop or bus.sharing)
   useEffect(() => {
-    if (role === 'driver') return
-    const p = Array.isArray(bus.position) ? bus.position : orderedStops[0]
-    setPos(p)
-    setCenter(p)
-  }, [bus.position, role])
+    if (!busId && !bus?.id) return
+    const id = busId || bus.id
+    const sim = bus?.sim || {}
+    // desired active if driver role uses prop 'sharing', else use bus.sharing from DB
+    const desiredActive = (role === 'driver') ? !!sharing : !!(bus.sharing)
+    if (desiredActive) {
+      if (sim.active) return // already running
+      const patch = {
+        active: true,
+        speedKmph: sim.speedKmph || bus.speedKmph || 30,
+        dir: sim.dir ?? 1,
+        mode: sim.mode || 'bounce',
+        lastUpdateAt: Date.now(),
+        offsetKm: typeof sim.offsetKm === 'number' ? sim.offsetKm : 0,
+      }
+      try { setSimFor(id, patch) } catch {}
+    } else {
+      if (!sim.active) return // already paused
+      const speed = Number(sim.speedKmph) || Number(bus.speedKmph) || 30
+      const dir = sim.dir === -1 ? -1 : 1
+      const last = Number(sim.lastUpdateAt) || Date.now()
+      const dtH = Math.max(0, (Date.now() - last) / 3600000)
+      const travelKm = (Number(sim.offsetKm) || 0) + dir * speed * dtH
+      const patch = {
+        active: false,
+        offsetKm: travelKm,
+        lastUpdateAt: Date.now(),
+      }
+      try { setSimFor(id, patch) } catch {}
+    }
+  }, [sharing, role, busId, bus?.id, bus?.sim?.active, bus?.sim?.offsetKm, bus?.sim?.speedKmph, bus?.sim?.dir, bus?.sim?.lastUpdateAt, bus?.sharing, bus?.speedKmph])
+
+  // Position for non-driver roles is handled by the sim tick above
+
+  // Prefer constraining view to the full polyline when we have at least 2 points
+  const boundsPoints = useMemo(() => {
+    if (routePoints && routePoints.length >= 2) return routePoints
+    if (orderedStops && orderedStops.length >= 2) return orderedStops
+    return null
+  }, [routePoints, orderedStops])
 
   return (
-    <MapContainer center={center} zoom={13} style={{ height: '400px', width: '100%' }}>
+    <MapContainer center={center} zoom={13} style={{ height: '460px', width: '100%' }} maxBoundsViscosity={1}>
       <TileLayer
         attribution='&copy; OpenStreetMap contributors'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      {boundsPoints && <BoundsController points={boundsPoints} />}
       {/* Live bus marker */}
       <Marker position={pos} icon={busIcon}>
         <Popup>
@@ -252,19 +311,24 @@ export default function MapView({ role = 'student', sharing = false }) {
         </Popup>
       </Marker>
 
-      {routeNow.orderedStops.map((s, i) => (
+      {routeNow.orderedStops.map((s, i) => {
+        const norm = (v) => String(v || '').trim().toLowerCase()
+        const isMine = norm(s.name) === norm(highlightStopName)
+        const variant = i === 0 ? 'start' : (i === routeNow.orderedStops.length - 1 ? 'end' : 'mid')
+        return (
         <Marker
           key={`${s.name}-${i}`}
           position={s.position}
-          icon={stopIcon(i === 0 ? 'start' : (i === routeNow.orderedStops.length - 1 ? 'end' : 'mid'))}
+            icon={isMine ? myStopIcon() : stopIcon(variant)}
           ref={i === 0 ? startMarkerRef : (i === routeNow.orderedStops.length - 1 ? endMarkerRef : null)}
         >
           <Popup>
             <div className="capitalize font-semibold">{s.name}</div>
-            <div className="text-xs text-gray-700">{i === 0 ? 'Start' : (i === routeNow.orderedStops.length - 1 ? 'Destination' : 'Stop')}</div>
+              <div className="text-xs text-gray-700">{isMine ? 'Your stop' : (i === 0 ? 'Start' : (i === routeNow.orderedStops.length - 1 ? 'Destination' : 'Stop'))}</div>
           </Popup>
         </Marker>
-      ))}
+        )
+  })}
 
       <Polyline positions={routePoints} />
       <FlyTo position={center} />

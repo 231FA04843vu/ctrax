@@ -5,6 +5,7 @@ import { login } from '../../utils/auth'
 export default function StudentLogin(){
   const nav = useNavigate()
   const [form, setForm] = useState({ email: '', password: '' })
+  const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -33,13 +34,16 @@ export default function StudentLogin(){
         </label>
         <label className="block text-sm">
           <span className="text-gray-700">Password</span>
-          <input type="password" className="mt-1 w-full border rounded px-3 py-2" value={form.password} onChange={e=>setForm(f=>({ ...f, password: e.target.value }))} required />
+          <div className="relative">
+            <input type={show ? 'text' : 'password'} className="mt-1 w-full border rounded px-3 py-2 pr-20" value={form.password} onChange={e=>setForm(f=>({ ...f, password: e.target.value }))} required />
+            <button type="button" onClick={() => setShow(s=>!s)} className="absolute right-2 top-1.5 px-2 py-1 text-xs border rounded">{show ? 'Hide' : 'Show'}</button>
+          </div>
         </label>
         <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-2 rounded">{loading ? 'Signing in...' : 'Sign in'}</button>
       </form>
       <div className="mt-4 text-sm text-gray-700 flex items-center justify-between">
         <Link to="/register/student" className="text-indigo-700 hover:underline">Create account</Link>
-        <Link to="/login/driver" className="hover:underline">Driver login</Link>
+        <Link to="/reset/student" className="hover:underline">Forgot password?</Link>
       </div>
     </div>
   )

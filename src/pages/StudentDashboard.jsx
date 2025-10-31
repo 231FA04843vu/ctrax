@@ -4,10 +4,13 @@ import MapView from '../shared/MapView'
 import BusList from '../shared/BusList'
 import LiveTimeline from '../shared/LiveTimeline'
 import { isRole, logout, getSession, getUsers, updateProfile } from '../utils/auth'
+import { useI18n } from '../i18n/i18n.jsx'
 import { buildRouteForNow } from '../utils/routeLogic'
-import { getBus, onBus } from '../utils/busData'
+import { onStopsFor, onStops } from '../utils/routeData'
+import { onBus } from '../utils/busData'
 
 export default function StudentDashboard(){
+  const { t } = useI18n()
   if (!isRole('student')) {
     return <Navigate to="/login/student" replace />
   }
@@ -41,17 +44,17 @@ export default function StudentDashboard(){
   }, [])
 
   // route/stop dropdown logic
-  const routeNow = useMemo(() => buildRouteForNow(), [])
-  const validBus = useMemo(() => {
-    const target = (getBus()?.id || '').trim().toLowerCase()
-    const entered = (form.busNo || '').trim().toLowerCase()
-    return !!target && !!entered && entered === target
-  }, [form.busNo])
+  const busId = (form.busNo || '').trim()
+  const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
-    // re-evaluate when bus id changes in DB
-    const off = onBus(() => {})
-    return off
-  }, [])
+    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
+    return onStops(() => setStopsTick(t => t + 1))
+  }, [busId])
+  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const validBus = useMemo(() => {
+    return !!busId && (routeNow?.orderedStops || []).length > 1
+  }, [busId, routeNow])
+  // No need to subscribe to global bus anymore for validity
   const stopOptions = useMemo(() => validBus ? ((routeNow?.orderedStops || []).map(s => s.name)) : [], [routeNow, validBus])
   useEffect(() => {
     if (!validBus) return
@@ -99,10 +102,10 @@ export default function StudentDashboard(){
     navigate('/account')
   }
   return (
-    <div className="space-y-4 max-w-7xl mx-auto">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Student Dashboard</h2>
-        <button onClick={onLogout} className="px-3 py-2 bg-red-600 text-white rounded shadow text-sm">Logout</button>
+  <div className="space-y-4 w-full max-w-none mx-0 px-0 sm:px-3 md:px-4">
+      <div className="flex items-center justify-between px-3 sm:px-0">
+        <h2 className="text-2xl font-semibold">{t('dashboard.student')}</h2>
+        <button onClick={onLogout} className="px-3 py-2 bg-red-600 text-white rounded shadow text-sm">{t('action.logout')}</button>
       </div>
 
       {/* Student details card */}
@@ -179,15 +182,15 @@ export default function StudentDashboard(){
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="md:col-span-2 bg-white p-4 rounded shadow">
-          <MapView role="student" />
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <div className="md:col-span-2 lg:col-span-3 bg-white p-3 sm:p-4 rounded-none md:rounded shadow">
+          <MapView role="student" busId={busId || null} highlightStopName={(form.stop || '').trim()} />
           <div className="mt-4">
-            <LiveTimeline />
+            <LiveTimeline busId={busId || null} highlightStopName={(form.stop || '').trim()} />
           </div>
         </div>
-        <div className="bg-white p-4 rounded shadow">
-          <BusList />
+        <div className="bg-white p-3 sm:p-4 rounded-none md:rounded shadow lg:col-span-1">
+          <BusList busId={busId || null} highlightStopName={(form.stop || '').trim()} />
         </div>
       </div>
     </div>

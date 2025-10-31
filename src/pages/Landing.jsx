@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
+import { onBuses } from '../utils/busData'
 
 export default function Landing() {
   const [busCount, setBusCount] = useState(3)
@@ -36,12 +37,18 @@ export default function Landing() {
   const [slide, setSlide] = useState(0)
   const autoRef = useRef(null)
 
+  // subscribe to realtime buses list and compute active count
   useEffect(() => {
-    const id = setInterval(() => {
-      setBusCount(c => Math.max(1, c + (Math.random() > 0.5 ? 1 : -1)))
-      setLastUpdated(new Date())
-    }, 5000)
-    return () => clearInterval(id)
+    const off = onBuses((list) => {
+      try {
+        const active = (list || []).filter(b => b && (b.sharing || (b.sim && b.sim.active))).length
+        setBusCount(active)
+        setLastUpdated(new Date())
+      } catch {
+        setBusCount(0)
+      }
+    })
+    return off
   }, [])
 
   // autoplay for banners
@@ -61,9 +68,8 @@ export default function Landing() {
 
   return (
     <div className="w-full min-h-screen bg-gray-50 flex flex-col overflow-x-hidden">
-  {/* make the content full-bleed so infographics span page width */}
-  {/* remove horizontal gutters on large screens so content can reach edges */}
-  <div className="w-full max-w-none mx-auto px-4 lg:px-0 py-12 space-y-20">
+  {/* Home page: center on mobile, full-bleed on desktop */}
+  <div className="w-full max-w-none mx-auto px-4 sm:px-6 lg:px-0 py-10 space-y-14">
         {/* SLIDING BANNERS */}
         <section className="relative w-full">
           <div className="relative overflow-hidden rounded-2xl shadow bg-black/5">
@@ -311,14 +317,14 @@ export default function Landing() {
                 <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v10a2 2 0 0 1-2 2v2h-2v-2H8v2H6v-2a2 2 0 0 1-2-2zM7 5h10a1 1 0 0 1 1 1v6H6V6a1 1 0 0 1 1-1z"/></svg>
               </div>
               <h3 className="text-lg font-semibold">Driver Onboarding</h3>
-              <p className="text-sm text-gray-600">Set Bus ID to link students and share live updates.</p>
+              <p className="text-sm text-gray-600">Apply to join, get approved by admin, and start live updates.</p>
               <div className="mt-4 relative">
                 <div className="absolute left-4 top-8 bottom-0 w-px bg-gray-200" />
                 {[
-                  'Sign up with Email & Phone',
-                  'Enter your Bus ID (required)',
-                  'Open Driver Dashboard',
-                  'Tap Start Sharing'
+                  'Apply with Name, Phone, Bus ID',
+                  'Admin approval (no self-register)',
+                  'Receive SMS with password',
+                  'Driver Login → Start Sharing'
                 ].map((text, i) => (
                   <div key={i} className="relative flex gap-4 items-start py-2">
                     <div className="z-10 flex-none w-8 h-8 rounded-full flex items-center justify-center font-semibold text-white bg-emerald-600 shadow">{i+1}</div>

@@ -2,34 +2,43 @@
 // Path in Firebase: routes/current/stops
 
 import { db } from './firebase'
-import { onValue, ref, set, get, update } from 'firebase/database'
+import { onValue, ref, set, get } from 'firebase/database'
 
-// Local default stops (migrated from previous mockData.stops)
-const DEFAULT_STOPS = [
-  { name: 'chuttugunta', position: [16.3067, 80.4365], eta: '26 mins', plannedOffsetMins: 26 },
-  { name: 'perecherla', position: [16.3323613, 80.3527921], eta: '42 mins', plannedOffsetMins: 42 },
-  { name: 'medikonduru', position: [16.346464, 80.3002], eta: '52 mins', plannedOffsetMins: 52 },
-  { name: 'jangamguntla palem', position: [16.3616057, 80.2697529], eta: '58 mins', plannedOffsetMins: 58 },
-  { name: 'bhiminenivaripalem', position: [16.3695, 80.237], eta: '64 mins', plannedOffsetMins: 64 },
-  { name: 'sattenapalli', position: [16.3925393, 80.1489341], eta: '81 mins', plannedOffsetMins: 81 }
-]
+const ROUTE_STOPS_PATH = 'routes/current/stops' // back-compat
 
-const ROUTE_STOPS_PATH = 'routes/current/stops'
-
-let stopsCache = DEFAULT_STOPS.slice()
+let stopsCache = []
 const subs = new Set()
 let inited = false
+// Multi-bus caches
+const busStopsCache = new Map() // id -> stops[]
+const busSubs = new Map() // id -> Set(cb)
+const busInit = new Set()
+
+function asArray(val){
+  if (Array.isArray(val)) return val
+  if (val && typeof val === 'object') return Object.values(val)
+  return []
+}
 
 function normalizeStops(val) {
-  if (!Array.isArray(val)) return DEFAULT_STOPS.slice()
+  const list = asArray(val)
   // Ensure positions are [lat,lng]
-  return val.map(s => ({
-    ...s,
-    position: Array.isArray(s.position)
-      ? s.position
-      : (s.position && typeof s.position === 'object' && '0' in s.position && '1' in s.position
-          ? [Number(s.position[0]), Number(s.position[1])] : undefined)
-  })).filter(s => Array.isArray(s.position) && s.position.length === 2)
+  return list.map(s => {
+    const pos = s.position
+    let normalizedPos
+    if (Array.isArray(pos)) {
+      normalizedPos = pos
+    } else if (pos && typeof pos === 'object') {
+      if ('lat' in pos && 'lng' in pos) normalizedPos = [Number(pos.lat), Number(pos.lng)]
+      else if ('latitude' in pos && 'longitude' in pos) normalizedPos = [Number(pos.latitude), Number(pos.longitude)]
+      else if ('0' in pos && '1' in pos) normalizedPos = [Number(pos[0]), Number(pos[1])]
+    } else {
+      // Fallback to top-level coordinates
+      if ('lat' in s && 'lng' in s) normalizedPos = [Number(s.lat), Number(s.lng)]
+      else if ('latitude' in s && 'longitude' in s) normalizedPos = [Number(s.latitude), Number(s.longitude)]
+    }
+    return { ...s, position: normalizedPos }
+  }).filter(s => Array.isArray(s.position) && s.position.length === 2)
 }
 
 function notify() {
@@ -40,16 +49,10 @@ async function initOnce() {
   if (inited) return
   inited = true
   const r = ref(db, ROUTE_STOPS_PATH)
-  try {
-    const snap = await get(r)
-    if (!snap.exists()) {
-      await set(r, DEFAULT_STOPS)
-    }
-  } catch {}
   onValue(r, (snap) => {
     const val = snap.val()
     stopsCache = normalizeStops(val)
-    if (!stopsCache.length) stopsCache = DEFAULT_STOPS.slice()
+    if (!stopsCache.length) stopsCache = []
     notify()
   }, (err) => {
     console.error('routeData listener error:', err)
@@ -73,8 +76,78 @@ export async function setStops(stops) {
   await set(ref(db, ROUTE_STOPS_PATH), normalized)
 }
 
+// Multi-bus variants at /buses/{id}/stops
+function pathForId(id){
+  return `buses/${id}/stops`
+}
+
+// For per-bus routes, we never want to fall back to DEFAULT_STOPS.
+function normalizeStopsForBus(val){
+  const list = asArray(val)
+  return list.map(s => {
+    const pos = s.position
+    let normalizedPos
+    if (Array.isArray(pos)) {
+      normalizedPos = pos
+    } else if (pos && typeof pos === 'object') {
+      if ('lat' in pos && 'lng' in pos) normalizedPos = [Number(pos.lat), Number(pos.lng)]
+      else if ('latitude' in pos && 'longitude' in pos) normalizedPos = [Number(pos.latitude), Number(pos.longitude)]
+      else if ('0' in pos && '1' in pos) normalizedPos = [Number(pos[0]), Number(pos[1])]
+    } else {
+      // Fallback to top-level coordinates
+      if ('lat' in s && 'lng' in s) normalizedPos = [Number(s.lat), Number(s.lng)]
+      else if ('latitude' in s && 'longitude' in s) normalizedPos = [Number(s.latitude), Number(s.longitude)]
+    }
+    return { ...s, position: normalizedPos }
+  }).filter(s => Array.isArray(s.position) && s.position.length === 2)
+}
+
+async function initForBus(id){
+  if (busInit.has(id)) return
+  busInit.add(id)
+  const r = ref(db, pathForId(id))
+  try {
+    const snap = await get(r)
+    if (!snap.exists()) {
+      // For per-bus routes, start empty; admin will add stops
+      await set(r, [])
+    }
+  } catch {}
+  onValue(r, (snap) => {
+    const val = snap.val()
+    const normalized = normalizeStopsForBus(val)
+    busStopsCache.set(id, normalized.length ? normalized : [])
+    const cbs = busSubs.get(id)
+    if (cbs) cbs.forEach(cb => { try { cb(busStopsCache.get(id)) } catch {} })
+  }, (err) => {
+    console.error('routeData bus listener error:', id, err)
+  })
+}
+
+export function getStopsFor(id){
+  initForBus(id)
+  return busStopsCache.get(id) || []
+}
+
+export function onStopsFor(id, callback){
+  initForBus(id)
+  if (!busSubs.has(id)) busSubs.set(id, new Set())
+  const setCbs = busSubs.get(id)
+  setCbs.add(callback)
+  try { callback(getStopsFor(id)) } catch {}
+  return () => setCbs.delete(callback)
+}
+
+export async function setStopsFor(id, stops){
+  const normalized = normalizeStopsForBus(stops)
+  await set(ref(db, pathForId(id)), normalized)
+}
+
 export default {
   getStops,
   onStops,
   setStops,
+  getStopsFor,
+  onStopsFor,
+  setStopsFor,
 }

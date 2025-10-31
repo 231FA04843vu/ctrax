@@ -1,12 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { register } from '../../utils/auth'
-import { buildRouteForNow } from '../../utils/routeLogic'
-import { getBus, onBus } from '../../utils/busData'
+import { listBuses, onBuses } from '../../utils/busData'
+import { onStopsFor, getStopsFor, getStops } from '../../utils/routeData'
 
 export default function StudentRegister(){
   const nav = useNavigate()
-  const routeNow = useMemo(() => buildRouteForNow(), [])
   const [form, setForm] = useState({
     name: '',
     rollNo: '',
@@ -17,37 +16,65 @@ export default function StudentRegister(){
     stop: '',
     password: ''
   })
-  const validBus = useMemo(() => {
-    const target = (getBus()?.id || '').trim().toLowerCase()
-    const entered = (form.busNo || '').trim().toLowerCase()
-    return !!target && entered && entered === target
-  }, [form.busNo])
+  const [buses, setBuses] = useState(() => listBuses())
+  const [busStops, setBusStops] = useState([])
   useEffect(() => {
-    const off = onBus(() => {})
+    const off = onBuses((list) => setBuses(list))
     return off
   }, [])
-  const stopOptions = useMemo(() => validBus ? ((routeNow?.orderedStops || []).map(s => s.name)) : [], [routeNow, validBus])
+  const stopOptions = useMemo(() => (busStops || []).map(s => s.name), [busStops])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [show, setShow] = useState(false)
+  const [agree, setAgree] = useState(false)
+  const passLen = (form.password || '').length
+  const passOk = passLen >= 6
+  const passClass = `mt-1 w-full border rounded px-3 py-2 pr-20 ${form.password ? (passOk ? 'border-emerald-500 focus:ring-emerald-500' : 'border-red-500 focus:ring-red-500') : ''}`
 
   useEffect(() => {
-    if (!validBus) {
+    // subscribe to stops for the selected bus
+    if (!form.busNo) {
+      setBusStops([])
       if (form.stop) setForm(f => ({ ...f, stop: '' }))
       return
     }
-    if (validBus && stopOptions.length && !stopOptions.includes(form.stop)){
+    // seed immediate snapshot then subscribe for live updates
+    const prime = getStopsFor(form.busNo)
+    if (Array.isArray(prime) && prime.length) {
+      setBusStops(prime)
+    } else {
+      // Fallback to global route stops until admin configures per-bus
+      setBusStops(getStops())
+    }
+    const off = onStopsFor(form.busNo, (stops) => {
+      if (Array.isArray(stops) && stops.length) {
+        setBusStops(stops)
+      } else {
+        setBusStops(getStops())
+      }
+    })
+    return off
+  }, [form.busNo])
+
+  useEffect(() => {
+    // ensure selected stop remains valid when list updates
+    if (!form.busNo) return
+    if (stopOptions.length && !stopOptions.includes(form.stop)){
       setForm(f => ({ ...f, stop: stopOptions[0] }))
     }
-  }, [validBus, stopOptions])
+  }, [stopOptions])
 
   const onSubmit = async (e) => {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      if (!validBus) {
-        throw new Error('Enter a valid Bus ID to select your stop')
+      if (!agree) {
+        throw new Error('Please accept the Terms and Privacy Policy to continue')
       }
+        if (!form.busNo) {
+          throw new Error('Please select your Bus ID')
+        }
       if (!form.stop) {
         throw new Error('Please select your stop')
       }
@@ -92,29 +119,44 @@ export default function StudentRegister(){
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="block text-sm">
-            <span className="text-gray-700">Bus ID (ask driver)</span>
-            <input className="mt-1 w-full border rounded px-3 py-2" value={form.busNo} onChange={e=>setForm(f=>({ ...f, busNo: e.target.value }))} placeholder={getBus()?.id || ''} required />
+            <span className="text-gray-700">Bus ID</span>
+            <select className="mt-1 w-full border rounded px-3 py-2" value={form.busNo} onChange={e=>setForm(f=>({ ...f, busNo: e.target.value, stop: '' }))} required>
+              <option value="">Select a bus</option>
+              {buses.map(b => (
+                <option key={b.id} value={b.id}>{b.id}{b.name ? ` — ${b.name}` : ''}</option>
+              ))}
+            </select>
           </label>
-          {validBus ? (
-            <label className="block text-sm">
-              <span className="text-gray-700">Your stop</span>
-              <select className="mt-1 w-full border rounded px-3 py-2" value={form.stop} onChange={e=>setForm(f=>({ ...f, stop: e.target.value }))}>
-                {stopOptions.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </label>
-          ) : (
-            <div className="text-xs text-gray-600 self-end mb-1">Enter a valid Bus ID to pick your stop.</div>
-          )}
+          <label className="block text-sm">
+            <span className="text-gray-700">Your stop</span>
+            <select className="mt-1 w-full border rounded px-3 py-2" value={form.stop} onChange={e=>setForm(f=>({ ...f, stop: e.target.value }))} disabled={!form.busNo}>
+              {!form.busNo && <option value="">Select a bus first</option>}
+              {form.busNo && stopOptions.length === 0 && <option value="">No stops configured</option>}
+              {form.busNo && stopOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </label>
         </div>
         <label className="block text-sm">
           <span className="text-gray-700">Password</span>
-          <input type="password" className="mt-1 w-full border rounded px-3 py-2" value={form.password} onChange={e=>setForm(f=>({ ...f, password: e.target.value }))} required />
+          <div className="relative">
+            <input type={show ? 'text' : 'password'} minLength={6} className={passClass} value={form.password} onChange={e=>setForm(f=>({ ...f, password: e.target.value }))} required />
+            <button type="button" onClick={() => setShow(s=>!s)} className="absolute right-2 top-1.5 px-2 py-1 text-xs border rounded">{show ? 'Hide' : 'Show'}</button>
+          </div>
+          <p className={`mt-1 text-xs ${form.password ? (passOk ? 'text-emerald-600' : 'text-red-600') : 'text-gray-500'}`}>Password must be at least 6 characters.</p>
         </label>
-        <button type="submit" disabled={loading} className="w-full bg-indigo-600 text-white py-2 rounded">{loading ? 'Creating...' : 'Create account'}</button>
+        <label className="flex items-start gap-2 text-sm">
+          <input type="checkbox" className="mt-1" checked={agree} onChange={e=>setAgree(e.target.checked)} />
+          <span className="text-gray-700">
+            I have read and agree to the
+            {' '}<Link to="/terms" className="text-indigo-700 hover:underline" target="_blank" rel="noreferrer">Terms of Service</Link>
+            {' '}and{' '}
+            <Link to="/privacy" className="text-indigo-700 hover:underline" target="_blank" rel="noreferrer">Privacy Policy</Link>.
+          </span>
+        </label>
+        <button type="submit" disabled={loading || !agree} className={`w-full py-2 rounded ${loading || !agree ? 'bg-indigo-300 text-white cursor-not-allowed' : 'bg-indigo-600 text-white'}`}>{loading ? 'Creating...' : 'Create account'}</button>
       </form>
       <div className="mt-4 text-sm text-gray-700 flex items-center justify-between">
         <Link to="/login/student" className="text-indigo-700 hover:underline">Already have an account?</Link>
-        <Link to="/register/driver" className="hover:underline">Driver register</Link>
       </div>
     </div>
   )

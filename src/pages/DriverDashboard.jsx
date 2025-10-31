@@ -3,26 +3,44 @@ import React, { useMemo, useRef, useState, useEffect } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import MapView from '../shared/MapView'
 import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
+import { onStopsFor, onStops } from '../utils/routeData'
 import { formatMinutes } from '../utils/format'
-import { isRole, getUsers, getSession, logout } from '../utils/auth'
-import { getBus, onBus, setBus as setBusDB, setSharing as setSharingDB } from '../utils/busData'
+import { isRole, getUsers, getSession, logout, updateProfile } from '../utils/auth'
+import { useI18n } from '../i18n/i18n.jsx'
+import { getBusFor, onBusFor, setBusFor, setSharingFor, setSimFor } from '../utils/busData'
 
 export default function DriverDashboard(){
+  const { t } = useI18n()
   if (!isRole('driver')) {
     return <Navigate to="/login/driver" replace />
   }
   const navigate = useNavigate()
-  const [bus, setBus] = useState(getBus())
-  const [sharing, setSharing] = useState(bus.sharing || false)
+  const [busId, setBusId] = useState('')
+  const [bus, setBus] = useState({})
+  const [sharing, setSharing] = useState(false)
   useEffect(() => {
-    const off = onBus((b) => { setBus(b); setSharing(b.sharing || false) })
-    return off
+    // derive assigned bus id from session/users (admin assignment)
+    try {
+      const session = getSession()
+      if (session?.role === 'driver'){
+        const drivers = getUsers('driver') || []
+        const me = drivers.find(d => d.id === session.id)
+        const assigned = (session.busNo || me?.busNo || '').trim()
+        setBusId(assigned)
+      }
+    } catch {}
   }, [])
+  useEffect(() => {
+    if (!busId) return
+    const off = onBusFor(busId, (b) => {
+      setBus(b || {})
+      setSharing((b && b.sharing) || false)
+    })
+    return off
+  }, [busId])
   const [form, setForm] = useState({
-    id: bus.id || '',
-    name: bus.name || '',
-    driverName: bus.driverName || '',
-    driverPhone: bus.driverPhone || ''
+    driverName: '',
+    driverPhone: ''
   })
   const [saved, setSaved] = useState(false)
   const [editing, setEditing] = useState(false)
@@ -38,12 +56,13 @@ export default function DriverDashboard(){
   }
 
   const onSave = async () => {
-    await setBusDB({
-      id: form.id.trim(),
-      name: form.name.trim(),
-      driverName: form.driverName.trim(),
-      driverPhone: form.driverPhone.trim()
-    })
+    if (!busId) return
+    const name = (form.driverName || '').trim()
+    const phone = (form.driverPhone || '').trim()
+    // Update driver profile so Admin and Student views reflect it everywhere
+    try { await updateProfile({ name, phone }) } catch {}
+    // Mirror into bus metadata for backward compatibility (student views may still read from bus)
+    try { await setBusFor(busId, { driverName: name, driverPhone: phone }) } catch {}
     setSaved(true)
     setEditing(false)
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
@@ -53,8 +72,6 @@ export default function DriverDashboard(){
     // Reset form to current saved values and close editor
     const b = bus
     setForm({
-      id: b.id || '',
-      name: b.name || '',
       driverName: b.driverName || '',
       driverPhone: b.driverPhone || ''
     })
@@ -62,7 +79,12 @@ export default function DriverDashboard(){
   }
 
   // Route details for the driver
-  const routeNow = useMemo(() => buildRouteForNow(), [])
+  const [stopsTick, setStopsTick] = useState(0)
+  useEffect(() => {
+    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
+    return onStops(() => setStopsTick(t => t + 1))
+  }, [busId])
+  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
   const ordered = routeNow.orderedStops
   const timeline = routeNow.timeline
   const totalDistanceKm = useMemo(() => {
@@ -87,7 +109,32 @@ export default function DriverDashboard(){
   const toggleShare = async () => {
     setSharing((s) => {
       const ns = !s
-      try { setSharingDB(ns) } catch {}
+      try { if (busId) setSharingFor(busId, ns) } catch {}
+      // Also start/pause the shared simulation state so all clients move in sync
+      try {
+        if (busId) {
+          const sim = (bus && bus.sim) || {}
+          if (ns) {
+            const patch = {
+              active: true,
+              speedKmph: sim.speedKmph || bus.speedKmph || 30,
+              dir: sim.dir ?? 1,
+              mode: sim.mode || 'bounce',
+              lastUpdateAt: Date.now(),
+              offsetKm: typeof sim.offsetKm === 'number' ? sim.offsetKm : 0,
+            }
+            setSimFor(busId, patch)
+          } else {
+            const speed = Number(sim.speedKmph) || Number(bus.speedKmph) || 30
+            const dir = sim.dir === -1 ? -1 : 1
+            const last = Number(sim.lastUpdateAt) || Date.now()
+            const dtH = Math.max(0, (Date.now() - last) / 3600000)
+            const travelKm = (Number(sim.offsetKm) || 0) + dir * speed * dtH
+            const patch = { active: false, offsetKm: travelKm, lastUpdateAt: Date.now() }
+            setSimFor(busId, patch)
+          }
+        }
+      } catch {}
       if (ns) {
         setShowShareHint(false)
         setShowNudge(false)
@@ -99,6 +146,29 @@ export default function DriverDashboard(){
       return ns
     })
   }
+
+  // While sharing, vary speed in DB every 30s so all views show the same changing speed
+  useEffect(() => {
+    if (!busId || !sharing) return
+    const id = setInterval(() => {
+      try {
+        const sim = (bus && bus.sim) || {}
+        // fold traveled distance since last update to keep continuity
+        const speed = Number(sim.speedKmph) || Number(bus.speedKmph) || 30
+        const dir = sim.dir === -1 ? -1 : 1
+        const last = Number(sim.lastUpdateAt) || Date.now()
+        const dtH = Math.max(0, (Date.now() - last) / 3600000)
+        const travelKm = (Number(sim.offsetKm) || 0) + dir * speed * dtH
+        const newSpeed = 10 + Math.floor(Math.random() * 51) // 10..60
+        setSimFor(busId, {
+          speedKmph: newSpeed,
+          offsetKm: travelKm,
+          lastUpdateAt: Date.now(),
+        })
+      } catch {}
+    }, 30000)
+    return () => clearInterval(id)
+  }, [busId, sharing, bus?.sim?.speedKmph, bus?.sim?.lastUpdateAt, bus?.sim?.offsetKm, bus?.sim?.dir, bus?.speedKmph])
   const scrollToShare = () => {
     const el = shareSectionRef.current
     if (el && el.scrollIntoView) {
@@ -109,28 +179,15 @@ export default function DriverDashboard(){
     try { localStorage.setItem('driverShareNudgeHidden', '1') } catch {}
   }
   useEffect(() => {
-    // On mount, hydrate the driver's bus ID from session/user to connect with students
+    // initialize persisted hint/nudge visibility
+    // initialize form from driver profile if available
     try {
       const session = getSession()
       if (session?.role === 'driver'){
         const drivers = getUsers('driver') || []
         const me = drivers.find(d => d.id === session.id)
-        const busNo = session.busNo || me?.busNo
-        const patch = {}
-        if (busNo && (!bus.id || bus.id !== busNo)){
-          patch.id = busNo
-          setForm(f => ({ ...f, id: busNo }))
-        }
-        if (me?.name && !bus.driverName){
-          patch.driverName = me.name
-          setForm(f => ({ ...f, driverName: me.name }))
-        }
-        if (me?.phone && !bus.driverPhone){
-          patch.driverPhone = me.phone
-          setForm(f => ({ ...f, driverPhone: me.phone }))
-        }
-        if (Object.keys(patch).length){
-          (async () => { try { await setBusDB(patch) } catch {} })()
+        if (me){
+          setForm({ driverName: me.name || '', driverPhone: me.phone || '' })
         }
       }
     } catch {}
@@ -156,14 +213,14 @@ export default function DriverDashboard(){
     return () => clearTimeout(t)
   }, [showNudge, sharing])
   return (
-    <div className="space-y-4 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-semibold">Driver Dashboard</h2>
+  <div className="space-y-4 w-full max-w-none mx-0 px-0 sm:px-3 md:px-4">
+      <div className="flex items-center justify-between px-3 sm:px-0">
+        <h2 className="text-2xl font-semibold">{t('dashboard.driver')}</h2>
         <button
           onClick={() => { try { setSharingDB(false); logout(); } catch {}; navigate('/account') }}
           className="px-3 py-2 bg-red-600 text-white rounded shadow text-sm"
         >
-          Logout
+          {t('action.logout')}
         </button>
       </div>
 
@@ -213,7 +270,7 @@ export default function DriverDashboard(){
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
             <div className="flex items-center justify-between md:block">
               <div className="text-gray-600 md:mb-1">Bus ID</div>
-              <div className="font-medium break-all">{bus.id}</div>
+              <div className="font-medium break-all">{busId || '—'}</div>
             </div>
             <div className="flex items-center justify-between md:block">
               <div className="text-gray-600 md:mb-1">Bus Name</div>
@@ -221,25 +278,35 @@ export default function DriverDashboard(){
             </div>
             <div className="flex items-center justify-between md:block">
               <div className="text-gray-600 md:mb-1">Driver Name</div>
-              <div className="font-medium capitalize">{bus.driverName}</div>
+              <div className="font-medium capitalize">{
+                (()=>{
+                  try {
+                    const session = getSession()
+                    const drivers = getUsers('driver') || []
+                    const d = drivers.find(x => x.busNo && busId && x.busNo.toLowerCase() === busId.toLowerCase()) || drivers.find(x=>x.id===session?.id)
+                    return d?.name || bus.driverName || '—'
+                  } catch { return bus.driverName || '—' }
+                })()
+              }</div>
             </div>
             <div className="flex items-center justify-between md:block">
               <div className="text-gray-600 md:mb-1">Driver Phone</div>
-              <div className="font-medium tracking-wide">{bus.driverPhone}</div>
+              <div className="font-medium tracking-wide">{
+                (()=>{
+                  try {
+                    const session = getSession()
+                    const drivers = getUsers('driver') || []
+                    const d = drivers.find(x => x.busNo && busId && x.busNo.toLowerCase() === busId.toLowerCase()) || drivers.find(x=>x.id===session?.id)
+                    return d?.phone || bus.driverPhone || '—'
+                  } catch { return bus.driverPhone || '—' }
+                })()
+              }</div>
             </div>
             <p className="md:col-span-2 text-xs text-gray-500">These details are used in the student view.</p>
           </div>
         ) : (
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <label className="text-sm">
-                <span className="block text-gray-600 mb-1">Bus ID</span>
-                <input name="id" value={form.id} onChange={onChange} className="w-full border rounded px-2 py-1" />
-              </label>
-              <label className="text-sm">
-                <span className="block text-gray-600 mb-1">Bus Name</span>
-                <input name="name" value={form.name} onChange={onChange} className="w-full border rounded px-2 py-1" />
-              </label>
               <label className="text-sm">
                 <span className="block text-gray-600 mb-1">Driver Name</span>
                 <input name="driverName" value={form.driverName} onChange={onChange} className="w-full border rounded px-2 py-1" />
@@ -305,24 +372,24 @@ export default function DriverDashboard(){
         </div>
       </div>
 
-      <div className="bg-white p-4 rounded shadow" ref={shareSectionRef}>
+      <div className="bg-white p-3 sm:p-4 rounded-none md:rounded shadow" ref={shareSectionRef}>
         <div className="flex items-center gap-3 mb-4">
-          <button onClick={toggleShare} className="px-3 py-2 bg-indigo-600 text-white rounded">{sharing ? 'Stop Sharing' : 'Start Sharing'}</button>
+          <button onClick={toggleShare} disabled={!busId} className="px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60 disabled:cursor-not-allowed">{sharing ? t('action.stopSharing') : t('action.startSharing')}</button>
           <span>{sharing ? 'Sharing live location' : 'Not sharing'}</span>
         </div>
-        <MapView role="driver" sharing={sharing} />
+        <MapView role="driver" sharing={sharing} busId={busId} />
       </div>
 
       {/* Enrolled Students List */}
       <div className="bg-white p-4 rounded shadow">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold">Enrolled Students</h3>
-          <span className="text-xs text-gray-500">Bus ID: {bus.id || '—'}</span>
+          <span className="text-xs text-gray-500">Bus ID: {busId || '—'}</span>
         </div>
         {(() => {
-          const students = (getUsers('student') || []).filter(s => (s.busNo || '').trim() && (bus.id || '').trim() && s.busNo.trim().toLowerCase() === (bus.id || '').trim().toLowerCase())
+          const students = (getUsers('student') || []).filter(s => (s.busNo || '').trim() && (busId || '').trim() && s.busNo.trim().toLowerCase() === (busId || '').trim().toLowerCase())
           const count = students.length
-          if (!bus.id){
+          if (!busId){
             return <div className="text-sm text-gray-600">Set your Bus ID in Driver details to see enrolled students.</div>
           }
           if (count === 0){

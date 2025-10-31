@@ -1,5 +1,5 @@
 
-# College Bus Tracker - Frontend Scaffold
+# CTrax - Frontend
 
 React + Vite + Tailwind v4 + @tailwindcss/postcss + OpenStreetMap (React-Leaflet)
 

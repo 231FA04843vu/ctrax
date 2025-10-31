@@ -8,7 +8,7 @@ export default function Footer() {
         <div className="md:col-span-2">
           <h3 className="text-2xl font-extrabold text-gray-800">About Us</h3>
           <p className="mt-3 text-gray-600 max-w-2xl">
-            College Bus Tracker is a lightweight, privacy-first service that
+            CTrax is a lightweight, privacy-first service that
             helps parents, students, and drivers coordinate daily campus
             transportation. We provide live-ish tracking, driver tools for route
             management, and timely alerts so families have peace of mind.
@@ -26,6 +26,9 @@ export default function Footer() {
                 </li>
                 <li>
                   <Link to="/driver" className="hover:text-blue-600">Driver Dashboard</Link>
+                </li>
+                <li>
+                  <Link to="/login/admin" className="hover:text-blue-600">Admin</Link>
                 </li>
               </ul>
             </div>
@@ -54,7 +57,7 @@ export default function Footer() {
 
       <div className="bg-gray-50 border-t border-gray-100">
         <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col sm:flex-row items-center justify-between text-sm text-gray-600">
-          <div>© {new Date().getFullYear()} cTraX. All rights reserved.</div>
+          <div>© {new Date().getFullYear()} CTrax. All rights reserved.</div>
           <div className="mt-3 sm:mt-0 space-x-4">
             <Link to="/privacy" className="hover:text-blue-600">Privacy</Link>
             <Link to="/terms" className="hover:text-blue-600">Terms</Link>

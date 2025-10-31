@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Home, User, Bus, Menu, X } from 'lucide-react';
+import { useI18n } from './i18n/i18n.jsx';
+import LanguageSwitcher from './shared/LanguageSwitcher';
+import LanguagePrompt from './shared/LanguagePrompt';
+import GoogleTranslate from './shared/GoogleTranslate';
 import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import StudentDashboard from './pages/StudentDashboard';
 import DriverDashboard from './pages/DriverDashboard';
@@ -15,6 +19,12 @@ import DriverLogin from './pages/auth/DriverLogin';
 import DriverRegister from './pages/auth/DriverRegister';
 import ParentLogin from './pages/auth/ParentLogin';
 import ParentDashboard from './pages/ParentDashboard';
+import AdminLogin from './pages/auth/AdminLogin';
+import AdminDashboard from './pages/AdminDashboard';
+import DriverResetPassword from './pages/auth/DriverResetPassword';
+import StudentResetPassword from './pages/auth/StudentResetPassword';
+import AdminResetPassword from './pages/auth/AdminResetPassword';
+import SeedAdmin from './pages/SeedAdmin';
 
 export default function App() {
   const [loading, setLoading] = useState(true);
@@ -40,6 +50,7 @@ export default function App() {
 
   // InnerApp runs inside BrowserRouter so hooks like useLocation are available
   function InnerApp() {
+    const { t } = useI18n();
     const [menuOpen, setMenuOpen] = useState(false);
     const location = useLocation();
 
@@ -47,8 +58,19 @@ export default function App() {
     const hideChrome = (
       location.pathname.startsWith('/student') ||
       location.pathname.startsWith('/driver') ||
-      location.pathname.startsWith('/parent')
+      location.pathname.startsWith('/parent') ||
+      location.pathname.startsWith('/privacy') ||
+      location.pathname.startsWith('/terms')
     );
+
+    // Always scroll to top on route changes so login/register pages are visible immediately
+    useEffect(() => {
+      try {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+      } catch {
+        window.scrollTo(0, 0);
+      }
+    }, [location.pathname]);
 
     return (
       <div className="min-h-screen bg-gray-50">
@@ -61,7 +83,7 @@ export default function App() {
               <Link to="/" className="flex items-center pl-6 lg:pl-0">
                 <img
                   src="/logo.svg"
-                  alt="CollBus Logo"
+                  alt="CTrax Logo"
                   className="h-10 w-auto select-none"
                 />
               </Link>
@@ -73,21 +95,21 @@ export default function App() {
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
                   <Home className="w-6 h-6" />
-                  Home
+                  {t('nav.home')}
                 </Link>
                 <Link
                   to="/login/student"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
                   <User className="w-6 h-6" />
-                  Student
+                  {t('nav.student')}
                 </Link>
                 <Link
                   to="/login/parent"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
                   <User className="w-6 h-6" />
-                  Parent
+                  {t('nav.parent')}
                 </Link>
                 <Link
                   to="/driver"
@@ -98,14 +120,14 @@ export default function App() {
                     alt="Driver"
                     className="w-6 h-6 object-contain"
                   />
-                  Driver
+                  {t('nav.driver')}
                 </Link>
                 <Link
                   to="/account"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
                   <User className="w-6 h-6" />
-                  Account
+                  {t('nav.account')}
                 </Link>
               </nav>
 
@@ -128,7 +150,7 @@ export default function App() {
                     onClick={() => setMenuOpen(false)}
                   >
                     <Home className="w-6 h-6" />
-                    Home
+                    {t('nav.home')}
                   </Link>
                   <Link
                     to="/login/student"
@@ -136,7 +158,7 @@ export default function App() {
                     onClick={() => setMenuOpen(false)}
                   >
                     <User className="w-6 h-6" />
-                    Student Login
+                    {t('nav.student')}
                   </Link>
                   <Link
                     to="/login/parent"
@@ -144,7 +166,7 @@ export default function App() {
                     onClick={() => setMenuOpen(false)}
                   >
                     <User className="w-6 h-6" />
-                    Parent Login
+                    {t('nav.parent')}
                   </Link>
                   <Link
                     to="/driver"
@@ -156,7 +178,7 @@ export default function App() {
                       alt="Driver"
                       className="w-6 h-6 object-contain"
                     />
-                    Driver
+                    {t('nav.driver')}
                   </Link>
                   <Link
                     to="/account"
@@ -164,7 +186,7 @@ export default function App() {
                     onClick={() => setMenuOpen(false)}
                   >
                     <User className="w-6 h-6" />
-                    Account
+                    {t('nav.account')}
                   </Link>
                 </div>
               </nav>
@@ -174,7 +196,7 @@ export default function App() {
 
         {/* Page Content */}
         {/* make main full-width; internal pages can control their own max-widths */}
-        <main className="w-full p-6">
+  <main className="w-full px-0 py-4 sm:px-4 sm:py-6">
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/student" element={<StudentDashboard />} />
@@ -185,6 +207,13 @@ export default function App() {
             <Route path="/login/driver" element={<DriverLogin />} />
             <Route path="/register/driver" element={<DriverRegister />} />
             <Route path="/login/parent" element={<ParentLogin />} />
+            <Route path="/login/admin" element={<AdminLogin />} />
+            <Route path="/admin" element={<AdminDashboard />} />
+            <Route path="/reset/driver" element={<DriverResetPassword />} />
+            <Route path="/reset/student" element={<StudentResetPassword />} />
+            <Route path="/reset/admin" element={<AdminResetPassword />} />
+            {/* One-time seed route — remove after use */}
+            <Route path="/__seed_admin" element={<SeedAdmin />} />
             <Route path="/account" element={<Account />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
@@ -193,6 +222,10 @@ export default function App() {
 
         {/* Global Footer */}
         {!hideChrome && <Footer />}
+  {/* Global language selector (mobile) & Google Translate (desktop), plus first-run prompt */}
+  <LanguageSwitcher />
+  <GoogleTranslate />
+        <LanguagePrompt />
       </div>
     );
   }
