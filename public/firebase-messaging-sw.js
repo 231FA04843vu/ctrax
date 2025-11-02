@@ -9,12 +9,12 @@ importScripts('https://www.gstatic.com/firebasejs/11.10.0/firebase-messaging-com
 
 // REPLACE with your project's web config
 firebase.initializeApp({
-  apiKey: 'REPLACE_WITH_API_KEY',
-  authDomain: 'REPLACE_WITH_AUTH_DOMAIN',
-  projectId: 'REPLACE_WITH_PROJECT_ID',
-  storageBucket: 'REPLACE_WITH_STORAGE_BUCKET',
-  messagingSenderId: 'REPLACE_WITH_MESSAGING_SENDER_ID',
-  appId: 'REPLACE_WITH_APP_ID',
+  apiKey: 'AIzaSyChkXVb5l77lX0EeASB88itja7tWAT8rYk',
+  authDomain: 'ctrax-0518.firebaseapp.com',
+  projectId: 'ctrax-0518',
+  storageBucket: 'ctrax-0518.firebasestorage.app',
+  messagingSenderId: '897335032821',
+  appId: '1:897335032821:web:ba8b3d381b1a17c71dbebc',
 })
 
 const messaging = firebase.messaging()
