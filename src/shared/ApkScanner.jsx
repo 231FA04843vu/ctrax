@@ -2,7 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react'
 
 // Simple QR code scanner block for APK download using Google Charts (no extra deps).
 // This component prefers rendering a direct <img> for the QR so it works reliably in dev and prod.
-export default function ApkScanner({ url = '/assets/ctrax-latest.apk', size = 160 }){
+export default function ApkScanner({ url = '/download/ctrax-latest.apk', size = 160 }){
   const [qrData, setQrData] = useState('')
   const [errored, setErrored] = useState(false)
 

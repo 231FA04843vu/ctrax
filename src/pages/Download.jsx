@@ -12,8 +12,8 @@ export default function Download() {
   const animTimeoutRef = useRef(null)
   const ANIM_PLAY_MS = 3500 // duration to show the attention animation so it can finish playing
 
-  // Use assets path to avoid accidental direct access under /download which may expose raw APK bytes
-  const apkPath = '/assets/ctrax-latest.apk'
+  // Serve from /download which maps to public/download/ctrax-latest.apk in Netlify build
+  const apkPath = '/download/ctrax-latest.apk'
   const [DotLottieComp, setDotLottieComp] = useState(null)
   const [appCfg, setAppCfg] = useState({ version: 'v1.0.0', size: '~12 MB', directUrl: 'https://www.upload-apk.com/en/T1VCNGKtl3b4MYy' })
 
