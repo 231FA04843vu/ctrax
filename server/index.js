@@ -2,7 +2,6 @@ import http from 'http'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
-import { fileURLToPath as furl } from 'url'
 import { createRequire } from 'module'
 import dotenv from 'dotenv'
 
@@ -11,7 +10,8 @@ let admin = null
 try {
   // defer import to allow running without the dependency during build
   const require = createRequire(import.meta.url)
-  admin = await import('firebase-admin')
+  const mod = await import('firebase-admin')
+  admin = mod?.default || mod
 } catch (e) {
   // firebase-admin not installed; notification API will be disabled
   admin = null
@@ -55,7 +55,7 @@ function contentTypeFor(filePath) {
 let messaging = null
 if (admin) {
   try {
-    const hasApp = admin.getApps().length > 0
+    const hasApp = Array.isArray(admin.apps) && admin.apps.length > 0
     if (!hasApp) {
       // Support either base64-encoded JSON in FIREBASE_SERVICE_ACCOUNT
       // or a file path in FIREBASE_SERVICE_ACCOUNT_PATH, or ADC
@@ -63,16 +63,17 @@ if (admin) {
       const svcPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
       if (svcBase64) {
         const json = JSON.parse(Buffer.from(svcBase64, 'base64').toString('utf-8'))
-        admin.initializeApp({ credential: admin.cert(json) })
-      } else if (svcPath && fs.existsSync(svcPath)) {
-        const json = JSON.parse(fs.readFileSync(svcPath, 'utf-8'))
-        admin.initializeApp({ credential: admin.cert(json) })
+        admin.initializeApp({ credential: admin.credential.cert(json) })
+      } else if (svcPath && fs.existsSync(path.resolve(svcPath))) {
+        const json = JSON.parse(fs.readFileSync(path.resolve(svcPath), 'utf-8'))
+        admin.initializeApp({ credential: admin.credential.cert(json) })
       } else {
         // Try default credentials if running on GCP or with GOOGLE_APPLICATION_CREDENTIALS
-        admin.initializeApp({})
+        admin.initializeApp()
       }
     }
-    messaging = admin.getMessaging()
+    messaging = admin.messaging()
+    console.log('Notifications API enabled (FCM)')
   } catch (e) {
     console.warn('Firebase Admin not initialized, notification API disabled:', e?.message || e)
   }
