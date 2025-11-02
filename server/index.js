@@ -1,10 +1,10 @@
-import 'dotenv/config'
 import http from 'http'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { fileURLToPath as furl } from 'url'
 import { createRequire } from 'module'
+import dotenv from 'dotenv'
 
 // Firebase Admin (optional: only initialized if credentials are present)
 let admin = null
@@ -19,6 +19,9 @@ try {
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
+// Load env from project root .env, then server/.env (if present)
+dotenv.config()
+dotenv.config({ path: path.join(__dirname, '.env') })
 const PORT = process.env.PORT || 3000
 const NOTIFY_API_KEY = process.env.NOTIFY_API_KEY || ''
 

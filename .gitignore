@@ -33,4 +33,5 @@ server/.env.*
 *firebase-adminsdk*.json
 *service-account*.json
 *.pem
+server/ctrax.json
 
