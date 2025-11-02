@@ -2,6 +2,31 @@ import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { onBuses } from '../utils/busData'
+import ApkScanner from '../shared/ApkScanner'
+
+// Small inline component: shows logo and toggles scanner on click
+function LogoScanner(){
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="flex flex-col items-center">
+      {!open ? (
+        <button onClick={() => setOpen(true)} className="w-40 h-40 bg-white rounded-lg flex items-center justify-center border hover:shadow transition" aria-label="Show APK scanner">
+          <img src="/logo.svg" alt="CTraX logo" className="w-28 h-28" />
+        </button>
+      ) : (
+        <div className="relative">
+          <div className="absolute right-0 top-0 -mt-2 -mr-2">
+            <button onClick={() => setOpen(false)} className="bg-white rounded-full p-1 shadow border" aria-label="Close scanner">✕</button>
+          </div>
+          <div className="bg-white p-2 rounded">
+            <ApkScanner />
+          </div>
+        </div>
+      )}
+      <div className="mt-3 text-xs text-gray-500">Scan or tap to install</div>
+    </div>
+  )
+}
 
 export default function Landing() {
   const [busCount, setBusCount] = useState(3)
@@ -388,15 +413,8 @@ export default function Landing() {
               <p className="mt-4 text-xs text-gray-500">Note: APK installs are manual. For the smoothest experience, install from Google Play when available.</p>
             </div>
             <div className="hidden md:flex flex-col items-center justify-center p-4 gap-3">
-              <div className="w-40 h-40 bg-white rounded-lg flex items-center justify-center border">
-                <img src="/logo.svg" alt="CTraX logo" className="w-28 h-28" />
-              </div>
-              <div className="mt-3 text-xs text-gray-500">Scan or tap to install</div>
-              {/* QR scanner for APK */}
-              <div className="mt-2">
-                {/* Lazy-load the QR scanner component to avoid SSR issues */}
-                <iframe title="QR" srcDoc={`<img src=\"https://chart.googleapis.com/chart?cht=qr&chs=160x160&chl=${encodeURIComponent(window.location.origin + '/download/ctrax-latest.apk')}\" style=\"width:100%;height:auto;border:0;\"/>`} style={{border:'none', width:160, height:160}} />
-              </div>
+              {/* Clickable logo area: shows scanner when tapped */}
+              <LogoScanner />
             </div>
           </div>
         </motion.section>
