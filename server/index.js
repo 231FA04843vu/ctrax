@@ -2,10 +2,24 @@ import http from 'http'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import { fileURLToPath as furl } from 'url'
+import { createRequire } from 'module'
+
+// Firebase Admin (optional: only initialized if credentials are present)
+let admin = null
+try {
+  // defer import to allow running without the dependency during build
+  const require = createRequire(import.meta.url)
+  admin = await import('firebase-admin')
+} catch (e) {
+  // firebase-admin not installed; notification API will be disabled
+  admin = null
+}
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 const PORT = process.env.PORT || 3000
+const NOTIFY_API_KEY = process.env.NOTIFY_API_KEY || ''
 
 const distDir = path.join(__dirname, '..', 'dist')
 const publicDir = path.join(__dirname, '..', 'public')
@@ -33,9 +47,88 @@ function contentTypeFor(filePath) {
   }
 }
 
-const server = http.createServer((req, res) => {
+// Attempt to initialize Firebase Admin using env credentials
+let messaging = null
+if (admin) {
+  try {
+    const hasApp = admin.getApps().length > 0
+    if (!hasApp) {
+      // Support either base64-encoded JSON in FIREBASE_SERVICE_ACCOUNT
+      // or a file path in FIREBASE_SERVICE_ACCOUNT_PATH, or ADC
+      const svcBase64 = process.env.FIREBASE_SERVICE_ACCOUNT
+      const svcPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH
+      if (svcBase64) {
+        const json = JSON.parse(Buffer.from(svcBase64, 'base64').toString('utf-8'))
+        admin.initializeApp({ credential: admin.cert(json) })
+      } else if (svcPath && fs.existsSync(svcPath)) {
+        const json = JSON.parse(fs.readFileSync(svcPath, 'utf-8'))
+        admin.initializeApp({ credential: admin.cert(json) })
+      } else {
+        // Try default credentials if running on GCP or with GOOGLE_APPLICATION_CREDENTIALS
+        admin.initializeApp({})
+      }
+    }
+    messaging = admin.getMessaging()
+  } catch (e) {
+    console.warn('Firebase Admin not initialized, notification API disabled:', e?.message || e)
+  }
+}
+
+function json(res, code, obj){
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(obj))
+}
+
+function parseBody(req){
+  return new Promise((resolve, reject) => {
+    let data = ''
+    req.on('data', chunk => { data += chunk })
+    req.on('end', () => {
+      try { resolve(data ? JSON.parse(data) : {}) } catch (e) { reject(e) }
+    })
+    req.on('error', reject)
+  })
+}
+
+const server = http.createServer(async (req, res) => {
   try {
     const reqUrl = decodeURI(req.url || '/')
+
+    // Simple health endpoint
+    if (reqUrl === '/health') {
+      json(res, 200, { ok: true })
+      return
+    }
+
+    // Notifications API (free via FCM): POST /api/notify
+    if (reqUrl === '/api/notify') {
+      if (req.method !== 'POST') { json(res, 405, { error: 'Method not allowed' }); return }
+      if (!messaging) { json(res, 503, { error: 'Notifications not configured on server' }); return }
+      if (NOTIFY_API_KEY) {
+        const k = req.headers['x-api-key'] || ''
+        if (k !== NOTIFY_API_KEY) { json(res, 401, { error: 'Unauthorized' }); return }
+      } else {
+        // If no API key set, only allow a restricted demo topic to avoid abuse
+        // This means you can still test locally without exposing open send-to-anyone.
+      }
+      let body
+      try { body = await parseBody(req) } catch { json(res, 400, { error: 'Invalid JSON' }); return }
+      const { token, topic, title, body: text, data } = body || {}
+      if (!token && !topic) { json(res, 400, { error: 'Provide token or topic' }); return }
+      const msg = {
+        notification: title || text ? { title: title || 'CTraX', body: text || '' } : undefined,
+        data: data || undefined,
+      }
+      if (token) msg.token = token
+      if (topic) msg.topic = topic
+      try {
+        const resp = await messaging.send(msg)
+        json(res, 200, { id: resp })
+      } catch (e) {
+        json(res, 500, { error: e?.message || String(e) })
+      }
+      return
+    }
 
     // Force-download endpoint for APK
     if (reqUrl === '/download/ctrax-latest.apk' || reqUrl.endsWith('/ctrax-latest.apk')) {
