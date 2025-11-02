@@ -5,6 +5,7 @@ import { useI18n } from '../i18n/i18n.jsx'
 import { listBuses, onBusFor, setBusFor } from '../utils/busData'
 import { onStopsFor, setStopsFor } from '../utils/routeData'
 import { onDriverApplications, approveDriverApplication, rejectDriverApplication, assignDriverToBus } from '../utils/admin'
+import { onAppConfig, setAppConfig } from '../utils/appConfig'
 import { MapContainer, TileLayer, Marker } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -315,7 +316,7 @@ export default function AdminDashboard(){
       </div>
 
       <div className="flex items-center gap-3">
-        {['approvals','bus','route'].map(k => (
+        {['approvals','bus','route','app'].map(k => (
           <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 rounded border ${tab===k? 'bg-indigo-600 text-white border-indigo-600' : ''}`}>{k[0].toUpperCase()+k.slice(1)}</button>
         ))}
       </div>
@@ -342,7 +343,7 @@ export default function AdminDashboard(){
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {apps.map(app => (
-                    <tr key={app.id} className={app.status!=='pending' ? 'opacity-70' : ''}>
+                    <tr key={app.id} className={app.status!== 'pending' ? 'opacity-70' : ''}>
                       <td className="px-3 py-2 capitalize">{app.name}</td>
                       <td className="px-3 py-2">{app.email}</td>
                       <td className="px-3 py-2">{app.phone}</td>
@@ -365,6 +366,7 @@ export default function AdminDashboard(){
               </table>
             </div>
           )}
+
         </section>
       )}
 
@@ -683,6 +685,64 @@ export default function AdminDashboard(){
           </div>
         </section>
       )}
+
+      {tab === 'app' && (
+        <section className="bg-white p-4 rounded shadow">
+          <h3 className="font-semibold mb-3">App Settings (Download page)</h3>
+          <AppSettingsBody />
+        </section>
+      )}
+    </div>
+  )
+}
+
+// separate component for clarity; function declarations are hoisted
+function AppSettingsBody(){
+  const [form, setForm] = useState({ version: 'v1.0.0', size: '~12 MB', directUrl: 'https://www.upload-apk.com/en/T1VCNGKtl3b4MYy' })
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    const off = onAppConfig((cfg) => setForm({ version: cfg.version || '', size: cfg.size || '', directUrl: cfg.directUrl || '' }))
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); try { off && off() } catch {} }
+  }, [])
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await setAppConfig({ version: (form.version||'').trim(), size: (form.size||'').trim(), directUrl: (form.directUrl||'').trim() })
+      setSaved(true)
+      if (timerRef.current) clearTimeout(timerRef.current)
+      timerRef.current = setTimeout(() => setSaved(false), 2500)
+    } catch (e) {
+      alert(e.message || 'Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <label className="flex flex-col text-sm">
+          <span className="text-gray-600">Latest Version</span>
+          <input className="mt-1 p-2 border rounded" value={form.version} onChange={e=>setForm(f=>({ ...f, version: e.target.value }))} placeholder="e.g., v1.1.0" />
+        </label>
+        <label className="flex flex-col text-sm">
+          <span className="text-gray-600">APK Size</span>
+          <input className="mt-1 p-2 border rounded" value={form.size} onChange={e=>setForm(f=>({ ...f, size: e.target.value }))} placeholder="e.g., ~14 MB" />
+        </label>
+        <label className="flex flex-col text-sm md:col-span-2">
+          <span className="text-gray-600">Mobile Fallback Direct Link</span>
+          <input className="mt-1 p-2 border rounded" value={form.directUrl} onChange={e=>setForm(f=>({ ...f, directUrl: e.target.value }))} placeholder="https://..." />
+          <span className="text-xs text-gray-500 mt-1">Shown on mobile if the button fails. Opens in a new tab.</span>
+        </label>
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button onClick={save} disabled={saving} className="px-3 py-2 bg-indigo-600 text-white rounded">{saving ? 'Saving…' : 'Save'}</button>
+        {saved && <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded">Saved</span>}
+      </div>
     </div>
   )
 }

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Download CTraX</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f8fafc;margin:0}
+      .card{background:#fff;border-radius:12px;padding:28px;box-shadow:0 6px 20px rgba(2,6,23,0.08);max-width:520px;width:100%;text-align:center}
+      .title{font-size:20px;font-weight:700;margin-bottom:8px}
+      .muted{color:#6b7280;margin-bottom:18px}
+      .btn{display:inline-flex;align-items:center;gap:10px;padding:12px 18px;background:#059669;color:#fff;border-radius:8px;text-decoration:none;font-weight:600}
+      .btn[disabled]{background:#d1fae5;color:#034d2b;opacity:.6;pointer-events:none}
+      .note{font-size:13px;color:#6b7280;margin-top:14px}
+      .fallback{margin-top:16px}
+      .small{font-size:12px;color:#9ca3af;margin-top:10px}
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="title">Download CTraX (Android)</div>
+      <div class="muted">Tap the button below to download the APK to your Android device. If you see a prompt, allow installation from your browser.</div>
+
+      <button id="downloadBtn" class="btn" disabled>⬇️ Download now</button>
+
+      <div id="status" class="note">Checking availability…</div>
+
+      <div class="fallback">
+        <div class="note">Prefer the in-app installer? <a href="/download">Open site download page</a></div>
+        <div class="small">If this page shows raw binary (lots of text), open the site download page instead.</div>
+      </div>
+    </div>
+
+    <script>
+      (function(){
+        const status = document.getElementById('status')
+        const btn = document.getElementById('downloadBtn')
+  const apkUrl = '/assets/ctrax-latest.apk'
+
+        function setStatus(text){ status.textContent = text }
+
+        async function tryHead(){
+          try{
+            const resp = await fetch(apkUrl, { method: 'HEAD' })
+            if (resp && (resp.status === 200 || resp.status === 206)) return true
+            return false
+          }catch(e){
+            // network/CORS — allow attempt
+            return true
+          }
+        }
+
+        async function downloadApk(){
+          setStatus('Downloading…')
+          try{
+            const resp = await fetch(apkUrl)
+            if (!resp.ok) throw new Error('Failed to fetch')
+            const blob = await resp.blob()
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = 'ctrax-latest.apk'
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            window.URL.revokeObjectURL(url)
+            setStatus('Download started — follow your browser prompts.')
+          }catch(e){
+            setStatus('Download failed — try the site download page or contact support.')
+          }
+        }
+
+        btn.addEventListener('click', () => {
+          // start the blob download; don't navigate to the APK URL directly (prevents raw binary view)
+          downloadApk()
+        })
+
+        // init
+        (async function init(){
+          const ok = await tryHead()
+          if (ok) { btn.removeAttribute('disabled'); setStatus('Ready — tap Download now to save the APK.') }
+          else { setStatus('APK not available on server. Use the site download page or contact admin.'); btn.setAttribute('disabled','') }
+        })()
+      })()
+    </script>
+  </body>
+</html>

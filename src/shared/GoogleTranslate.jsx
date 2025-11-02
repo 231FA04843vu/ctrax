@@ -1,21 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
 
 // Google Translate widget wrapper with strict single-init and desktop-only display
-export default function GoogleTranslate(){
+export default function GoogleTranslate({ visible = false, onClose = () => {} }){
   const containerRef = useRef(null)
   const [enabled, setEnabled] = useState(false)
-  const [visible, setVisible] = useState(true)
 
   useEffect(() => {
-    // Desktop only
-    let isDesktop = false
-    try { isDesktop = window.matchMedia && window.matchMedia('(min-width: 768px)').matches } catch { isDesktop = true }
-    if (!isDesktop) return
-
-  setEnabled(true)
-
-  // Auto-hide after 30 seconds (widget stays initialized, just hidden)
-  const hideTimer = setTimeout(() => setVisible(false), 30000)
+    // Enable the widget on all devices but keep it hidden until parent toggles `visible`.
+    setEnabled(true)
 
     // Guard: create widget only once even in React StrictMode double-mount
     const initOnce = () => {
@@ -35,8 +27,8 @@ export default function GoogleTranslate(){
       } catch { /* ignore */ }
     }
 
-    // Expose callback for Google script
-    window.googleTranslateElementInit = () => initOnce()
+  // Expose callback for Google script
+  window.googleTranslateElementInit = () => initOnce()
 
     // If script already loaded, init immediately
     if (window.google && window.google.translate && window.google.translate.TranslateElement) {
@@ -59,26 +51,58 @@ export default function GoogleTranslate(){
       window.__gtScriptAppended = true
     }
 
-    // Cleanup timer only; keep script and widget persistent
-    return () => { clearTimeout(hideTimer) }
+    // Cleanup; keep script and widget persistent
+    return () => { /* nothing to cleanup here */ }
   }, [])
+
+  // After the widget is created, attach a change listener to auto-close when language changes.
+  useEffect(() => {
+    if (!enabled) return
+
+    let mounted = true
+    let poll = null
+
+    const attach = () => {
+      const select = document.querySelector('.goog-te-combo')
+      if (!select) return false
+      const onChange = () => {
+        try { onClose() } catch {}
+      }
+      select.addEventListener('change', onChange)
+      // cleanup helper
+      poll = () => select.removeEventListener('change', onChange)
+      return true
+    }
+
+    // Try attaching immediately, otherwise poll for the element
+    if (!attach()) {
+      const interval = setInterval(() => {
+        if (!mounted) return
+        if (attach()) { clearInterval(interval) }
+      }, 600)
+      return () => { mounted = false; clearInterval(interval); if (poll) poll() }
+    }
+
+    return () => { mounted = false; if (poll) poll() }
+  }, [enabled, onClose])
 
   if (!enabled) return null
 
+  // Always render the container so the Translate widget can be initialized even while hidden.
   return (
-    <div
-      ref={containerRef}
-      className={`hidden ${visible ? 'md:block' : 'md:hidden'} fixed top-4 right-4 z-50 bg-white/90 backdrop-blur rounded-md shadow border px-2 py-1`}
-    >
-      {/* Optional minimal style tweaks without removing branding */}
-      <style>{`
-        .goog-te-gadget { font-family: inherit; }
-        .goog-te-gadget .goog-te-combo { 
-          padding: 4px 6px; border-radius: 6px; border: 1px solid #e5e7eb; 
-          font-size: 0.875rem; background: white; color: #111827;
-        }
-      `}</style>
-      <div id="google_translate_element" />
+    <div ref={containerRef} className="fixed top-16 right-4 z-50" style={{ display: visible ? 'block' : 'none' }}>
+      <div className="bg-white/90 backdrop-blur rounded-md shadow border px-3 py-2">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div id="google_translate_element" />
+        </div>
+        <style>{`
+          .goog-te-gadget { font-family: inherit; }
+          .goog-te-gadget .goog-te-combo { 
+            padding: 6px 8px; border-radius: 6px; border: 1px solid #e5e7eb; 
+            font-size: 0.95rem; background: white; color: #111827;
+          }
+        `}</style>
+      </div>
     </div>
   )
 }

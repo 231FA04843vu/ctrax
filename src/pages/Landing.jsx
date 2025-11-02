@@ -2,31 +2,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { onBuses } from '../utils/busData'
-import ApkScanner from '../shared/ApkScanner'
-
-// Small inline component: shows logo and toggles scanner on click
-function LogoScanner(){
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="flex flex-col items-center">
-      {!open ? (
-        <button onClick={() => setOpen(true)} className="w-40 h-40 bg-white rounded-lg flex items-center justify-center border hover:shadow transition" aria-label="Show APK scanner">
-          <img src="/logo.svg" alt="CTraX logo" className="w-28 h-28" />
-        </button>
-      ) : (
-        <div className="relative">
-          <div className="absolute right-0 top-0 -mt-2 -mr-2">
-            <button onClick={() => setOpen(false)} className="bg-white rounded-full p-1 shadow border" aria-label="Close scanner">✕</button>
-          </div>
-          <div className="bg-white p-2 rounded">
-            <ApkScanner />
-          </div>
-        </div>
-      )}
-      <div className="mt-3 text-xs text-gray-500">Scan or tap to install</div>
-    </div>
-  )
-}
+import LogoScannerFlip from '../shared/LogoScannerFlip'
 
 export default function Landing() {
   const [busCount, setBusCount] = useState(3)
@@ -90,6 +66,27 @@ export default function Landing() {
     hidden: { opacity: 0, y: 40 },
     visible: { opacity: 1, y: 0, transition: { duration: 0.8, ease: 'easeOut' } },
   }
+
+  // Detect whether page is running inside a native app / embedded webview
+  const [isInApp, setIsInApp] = useState(false)
+  useEffect(() => {
+    try {
+      const ua = navigator.userAgent || ''
+      // display-mode standalone (PWA) or navigator.standalone (iOS) indicate installed/standalone
+      const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
+        || (window.navigator && (window.navigator).standalone)
+
+      // common webview indicators: 'wv' token on Android, or Android.*Version/ in some webviews
+      const isAndroidWebView = /; wv\)|Android.*Version\//i.test(ua) || /\bwv\b/i.test(ua)
+
+      // some in-app browsers (Facebook, Instagram) include identifiable tokens
+      const isInAppBrowser = /FBAN|FBAV|Instagram|Line|UCBrowserMini/i.test(ua)
+
+      setIsInApp(Boolean(isStandalone || isAndroidWebView || isInAppBrowser))
+    } catch (e) {
+      setIsInApp(false)
+    }
+  }, [])
 
   return (
     <div className="w-full min-h-screen bg-gray-50 flex flex-col overflow-x-hidden">
@@ -366,23 +363,27 @@ export default function Landing() {
           
         </motion.section>
         {/* ANDROID DOWNLOAD — simple install steps for mobile users */}
-        <motion.section
-          className="bg-white rounded-lg border p-6 shadow-sm"
-          variants={fadeInUp}
-          initial="hidden"
-          whileInView="visible"
-          viewport={{ once: true, amount: 0.2 }}
-        >
+        {!isInApp && (
+          <motion.section
+            className="bg-white rounded-lg border p-6 shadow-sm"
+            variants={fadeInUp}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, amount: 0.2 }}
+          >
           <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
             <div className="md:col-span-2">
               <h3 className="text-lg font-semibold">Get the CTraX Android app</h3>
               <p className="text-sm text-gray-600 mt-2">Install the mobile app to receive push alerts, quick access to your child’s bus, and offline map previews.</p>
+              <div className="mt-2 text-sm text-gray-600">
+                <strong>Notifications:</strong> The app delivers push notifications and the dashboard notification features are available only via the mobile app. Install on your Android device to receive arrival alerts and important updates.
+              </div>
 
               <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:gap-4">
-                <a href="/download/ctrax-latest.apk" className="inline-flex items-center gap-3 px-5 py-3 bg-green-600 text-white rounded-lg shadow hover:bg-green-700">
+                <Link to="/download" className="inline-flex items-center gap-3 px-5 py-3 bg-green-600 text-white rounded-lg shadow hover:bg-green-700">
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="opacity-90"><path d="M12 2l3 6 6 1-4.5 4 1 6L12 17l-5.5 2 1-6L3 9l6-1 3-6z" fill="currentColor"/></svg>
                   Download APK (Android)
-                </a>
+                </Link>
                 <a href="https://play.google.com/store/apps" target="_blank" rel="noreferrer" className="mt-3 sm:mt-0 inline-block text-sm text-gray-600">Or find on Google Play (coming soon)</a>
               </div>
 
@@ -412,12 +413,13 @@ export default function Landing() {
 
               <p className="mt-4 text-xs text-gray-500">Note: APK installs are manual. For the smoothest experience, install from Google Play when available.</p>
             </div>
-            <div className="hidden md:flex flex-col items-center justify-center p-4 gap-3">
+            <div className="flex flex-col items-center justify-center p-4 gap-3">
               {/* Clickable logo area: shows scanner when tapped */}
-              <LogoScanner />
+              <LogoScannerFlip />
             </div>
           </div>
-        </motion.section>
+          </motion.section>
+        )}
 
         <motion.footer
           className="text-center text-sm text-gray-600"

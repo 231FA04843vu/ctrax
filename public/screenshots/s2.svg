@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="720" viewBox="0 0 360 720">
+  <rect rx="28" width="360" height="720" fill="#34D399" />
+  <rect x="20" y="60" width="320" height="140" rx="12" fill="#fff" />
+  <rect x="20" y="220" width="320" height="120" rx="12" fill="#fff" />
+  <rect x="20" y="360" width="320" height="260" rx="12" fill="#fff" />
+  <text x="30" y="94" fill="#064E3B" font-family="sans-serif" font-size="18">Student Dashboard</text>
+  <text x="30" y="254" fill="#064E3B" font-family="sans-serif" font-size="18">Route Details</text>
+  <text x="30" y="394" fill="#064E3B" font-family="sans-serif" font-size="18">Notifications</text>
+</svg>

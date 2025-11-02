@@ -11,6 +11,7 @@ import DriverDashboard from './pages/DriverDashboard';
 import Landing from './pages/Landing';
 import Privacy from './pages/Privacy';
 import Terms from './pages/Terms';
+import Download from './pages/Download';
 import Account from './pages/Account';
 import Footer from './shared/Footer';
 import StudentLogin from './pages/auth/StudentLogin';
@@ -51,7 +52,11 @@ export default function App() {
   // InnerApp runs inside BrowserRouter so hooks like useLocation are available
   function InnerApp() {
     const { t } = useI18n();
-    const [menuOpen, setMenuOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  // translateOpen controls the pull-tab visibility + nav shift
+  const [translateOpen, setTranslateOpen] = useState(false);
+  // translateWidget controls the Google Translate language widget visibility
+  const [translateWidget, setTranslateWidget] = useState(false);
     const location = useLocation();
 
     // hide global chrome (header/footer) for dashboard routes
@@ -88,8 +93,11 @@ export default function App() {
                 />
               </Link>
 
-              {/* Desktop Navigation shifted slightly left for better visual alignment */}
-              <nav className="hidden md:flex items-center space-x-14 mr-8">
+              {/* Desktop Navigation - shifts left when translate pill pulls out */}
+              <nav
+                className="hidden md:flex items-center space-x-12 mr-6"
+                style={{ transform: translateOpen ? 'translateX(-140px)' : 'translateX(0)', transition: 'transform .28s ease' }}
+              >
                 <Link
                   to="/"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
@@ -129,7 +137,26 @@ export default function App() {
                   <User className="w-6 h-6" />
                   {t('nav.account')}
                 </Link>
+                {/* Inline translate dot placed after Account */}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setTranslateOpen(prev => {
+                      const next = !prev;
+                      if (!next) { setTranslateWidget(false); }
+                      return next;
+                    })
+                  }
+                  aria-label="Open translate"
+                  aria-pressed={translateOpen}
+                  className="inline-flex items-center justify-center p-1 rounded-full hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                >
+                  <span className="block w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                </button>
+
               </nav>
+
+              {/* translate toggle removed from header — floating pull-tab will be used instead */}
 
               {/* Mobile menu toggle */}
               <button
@@ -215,6 +242,7 @@ export default function App() {
             {/* One-time seed route — remove after use */}
             <Route path="/__seed_admin" element={<SeedAdmin />} />
             <Route path="/account" element={<Account />} />
+            <Route path="/download" element={<Download />} />
             <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />
           </Routes>
@@ -223,9 +251,25 @@ export default function App() {
         {/* Global Footer */}
         {!hideChrome && <Footer />}
   {/* Global language selector (mobile) & Google Translate (desktop), plus first-run prompt */}
+  {/* Floating translate pull-tab (top-right). Dot toggles pull, button shows languages */}
+  <div className="fixed top-4 right-4 z-[60]" style={{ pointerEvents: translateOpen ? 'auto' : 'none' }}>
+    <div
+      style={{ transform: translateOpen ? 'translateX(0)' : 'translateX(120%)', transition: 'transform .28s ease', opacity: translateOpen ? 1 : 0 }}
+      className="bg-white/90 border rounded-l-full shadow px-3 py-1"
+    >
+      <button
+        onClick={() => setTranslateWidget(true)}
+        aria-expanded={translateWidget}
+        className="text-sm text-gray-700"
+      >
+        Translate
+      </button>
+    </div>
+  </div>
+
   <LanguageSwitcher />
-  <GoogleTranslate />
-        <LanguagePrompt />
+  <GoogleTranslate visible={translateWidget} onClose={() => setTranslateWidget(false)} />
+  <LanguagePrompt />
       </div>
     );
   }
