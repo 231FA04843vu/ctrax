@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { onBuses } from '../utils/busData'
 import LogoScannerFlip from '../shared/LogoScannerFlip'
+import EnableNotifications from '../shared/EnableNotifications'
 
 export default function Landing() {
   const [busCount, setBusCount] = useState(3)
@@ -252,6 +253,17 @@ export default function Landing() {
               <p className="text-sm text-gray-600 mt-2">{desc}</p>
             </motion.div>
           ))}
+        </motion.section>
+
+        {/* WEB PUSH OPT-IN (for PWA / Add to Home Screen) */}
+        <motion.section
+          className="mt-8"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
+        >
+          <EnableNotifications />
         </motion.section>
 
         {/* REGISTRATION & GUIDES — student / parent / driver */}
