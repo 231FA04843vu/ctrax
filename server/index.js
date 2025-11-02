@@ -106,7 +106,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Notifications API (free via FCM): POST /api/notify
-    if (reqUrl === '/api/notify') {
+  if (reqUrl === '/api/notify') {
       if (req.method !== 'POST') { json(res, 405, { error: 'Method not allowed' }); return }
       if (!messaging) { json(res, 503, { error: 'Notifications not configured on server' }); return }
       if (NOTIFY_API_KEY) {
@@ -130,7 +130,13 @@ const server = http.createServer(async (req, res) => {
         const resp = await messaging.send(msg)
         json(res, 200, { id: resp })
       } catch (e) {
-        json(res, 500, { error: e?.message || String(e) })
+        console.error('Notify error:', e)
+        const payload = {
+          error: e?.message || String(e),
+          code: e?.code || e?.errorInfo?.code,
+          details: e?.errorInfo || undefined,
+        }
+        json(res, 500, payload)
       }
       return
     }
