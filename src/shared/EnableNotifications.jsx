@@ -37,8 +37,15 @@ export default function EnableNotifications(){
       const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY
       if (!vapidKey) throw new Error('Missing VAPID key (VITE_FIREBASE_VAPID_KEY)')
 
-      // Use existing app
-      const app = getApps()[0] || initializeApp({})
+      // Ensure we have a properly initialized Firebase app with config
+      const app = getApps()[0] || initializeApp({
+        apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+        authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+        projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+        storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+        messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+        appId: import.meta.env.VITE_FIREBASE_APP_ID,
+      })
       const messaging = getMessaging(app)
       const t = await getToken(messaging, { vapidKey, serviceWorkerRegistration: reg })
       if (!t) throw new Error('Failed to get token')
