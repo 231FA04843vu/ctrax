@@ -25,3 +25,12 @@ Thumbs.db
 .env
 .env.*
 
+# Server-specific env
+server/.env
+server/.env.*
+
+# Never commit service account keys
+*firebase-adminsdk*.json
+*service-account*.json
+*.pem
+
