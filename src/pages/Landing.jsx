@@ -340,6 +340,66 @@ export default function Landing() {
 
           
         </motion.section>
+        {/* ANDROID DOWNLOAD — simple install steps for mobile users */}
+        <motion.section
+          className="bg-white rounded-lg border p-6 shadow-sm"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
+        >
+          <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-semibold">Get the CTraX Android app</h3>
+              <p className="text-sm text-gray-600 mt-2">Install the mobile app to receive push alerts, quick access to your child’s bus, and offline map previews.</p>
+
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:gap-4">
+                <a href="/download/ctrax-latest.apk" className="inline-flex items-center gap-3 px-5 py-3 bg-green-600 text-white rounded-lg shadow hover:bg-green-700">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="opacity-90"><path d="M12 2l3 6 6 1-4.5 4 1 6L12 17l-5.5 2 1-6L3 9l6-1 3-6z" fill="currentColor"/></svg>
+                  Download APK (Android)
+                </a>
+                <a href="https://play.google.com/store/apps" target="_blank" rel="noreferrer" className="mt-3 sm:mt-0 inline-block text-sm text-gray-600">Or find on Google Play (coming soon)</a>
+              </div>
+
+              <ol className="mt-6 space-y-3 text-sm">
+                <li className="flex items-start gap-3">
+                  <div className="flex-none w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-semibold flex items-center justify-center">1</div>
+                  <div>
+                    <div className="font-medium">Download the APK</div>
+                    <div className="text-gray-500">Tap the APK link above and save the file to your device.</div>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <div className="flex-none w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-semibold flex items-center justify-center">2</div>
+                  <div>
+                    <div className="font-medium">Enable installs</div>
+                    <div className="text-gray-500">Go to Settings → Security and allow installs from unknown sources for your browser (temporary).</div>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <div className="flex-none w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-semibold flex items-center justify-center">3</div>
+                  <div>
+                    <div className="font-medium">Install & open</div>
+                    <div className="text-gray-500">Open the downloaded APK and follow on-screen instructions. Grant location permissions for live tracking.</div>
+                  </div>
+                </li>
+              </ol>
+
+              <p className="mt-4 text-xs text-gray-500">Note: APK installs are manual. For the smoothest experience, install from Google Play when available.</p>
+            </div>
+            <div className="hidden md:flex flex-col items-center justify-center p-4 gap-3">
+              <div className="w-40 h-40 bg-white rounded-lg flex items-center justify-center border">
+                <img src="/logo.svg" alt="CTraX logo" className="w-28 h-28" />
+              </div>
+              <div className="mt-3 text-xs text-gray-500">Scan or tap to install</div>
+              {/* QR scanner for APK */}
+              <div className="mt-2">
+                {/* Lazy-load the QR scanner component to avoid SSR issues */}
+                <iframe title="QR" srcDoc={`<img src=\"https://chart.googleapis.com/chart?cht=qr&chs=160x160&chl=${encodeURIComponent(window.location.origin + '/download/ctrax-latest.apk')}\" style=\"width:100%;height:auto;border:0;\"/>`} style={{border:'none', width:160, height:160}} />
+              </div>
+            </div>
+          </div>
+        </motion.section>
 
         <motion.footer
           className="text-center text-sm text-gray-600"
