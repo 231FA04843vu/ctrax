@@ -84,18 +84,35 @@ export async function handler(event) {
   }
 
   const { token, topic, title, body: text, data } = body || {}
-  if (!token && !topic) return json(400, { error: 'Provide token or topic' })
-
-  const msg = {
-    notification: title || text ? { title: title || 'CTraX', body: text || '' } : undefined,
-    data: data || undefined,
-  }
-  if (token) msg.token = token
-  if (topic) msg.topic = topic
+  // Support actions: send (default), subscribe, unsubscribe
+  const action = body.action || 'send'
+  if (action === 'send' && !token && !topic) return json(400, { error: 'Provide token or topic' })
+  if ((action === 'subscribe' || action === 'unsubscribe') && (!token || !topic)) return json(400, { error: 'Provide token and topic for subscribe/unsubscribe' })
 
   try {
-    const id = await msgSvc.send(msg)
-    return json(200, { id })
+    if (action === 'send') {
+      const msg = {
+        notification: title || text ? { title: title || 'CTraX', body: text || '' } : undefined,
+        data: data || undefined,
+      }
+      if (token) msg.token = token
+      if (topic) msg.topic = topic
+      const id = await msgSvc.send(msg)
+      return json(200, { id })
+    }
+
+    if (action === 'subscribe') {
+      // admin.messaging().subscribeToTopic accepts (tokens, topic)
+      const resp = await msgSvc.subscribeToTopic(Array.isArray(token) ? token : [token], topic)
+      return json(200, { result: resp })
+    }
+
+    if (action === 'unsubscribe') {
+      const resp = await msgSvc.unsubscribeFromTopic(Array.isArray(token) ? token : [token], topic)
+      return json(200, { result: resp })
+    }
+
+    return json(400, { error: 'Unknown action' })
   } catch (e) {
     const payload = {
       error: e?.message || String(e),
