@@ -12,24 +12,42 @@ firebase.initializeApp({
   apiKey: 'AIzaSyChkXVb5l77lX0EeASB88itja7tWAT8rYk',
   authDomain: 'ctrax-0518.firebaseapp.com',
   projectId: 'ctrax-0518',
-  storageBucket: 'ctrax-0518.firebasestorage.app',
+  // NOTE: Firebase Storage bucket should use appspot.com
+  storageBucket: 'ctrax-0518.appspot.com',
   messagingSenderId: '897335032821',
   appId: '1:897335032821:web:ba8b3d381b1a17c71dbebc',
 })
 
 const messaging = firebase.messaging()
 
+// Force new service worker to take control as soon as possible and help debugging
+self.skipWaiting()
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim())
+  console.log('[firebase-messaging-sw] activated and claimed clients')
+})
+
+// Log raw push events for deeper debugging
+self.addEventListener('push', (event) => {
+  console.log('[firebase-messaging-sw] push event received', event)
+})
+
 // Handle background messages
 messaging.onBackgroundMessage((payload) => {
-  const title = payload?.notification?.title || 'CTraX'
-  const body = payload?.notification?.body || ''
-  const options = {
-    body,
-    data: payload?.data || {},
-    // icon: '/icons/icon-192.png', // optional app icon
-    // actions: [ { action: 'open', title: 'Open' } ],
+  try {
+    console.log('[firebase-messaging-sw] onBackgroundMessage payload:', payload)
+    const title = payload?.notification?.title || 'CTraX'
+    const body = payload?.notification?.body || ''
+    const options = {
+      body,
+      data: payload?.data || {},
+      // icon: '/icons/icon-192.png', // optional app icon
+      // actions: [ { action: 'open', title: 'Open' } ],
+    }
+    return self.registration.showNotification(title, options)
+  } catch (e) {
+    console.error('[firebase-messaging-sw] failed to show notification', e)
   }
-  self.registration.showNotification(title, options)
 })
 
 self.addEventListener('notificationclick', (event) => {
@@ -43,4 +61,9 @@ self.addEventListener('notificationclick', (event) => {
     }
     await clients.openWindow(url)
   })())
+})
+
+// Provide an easy log for when the SW receives notifications (background)
+self.addEventListener('notificationclose', (event) => {
+  console.log('[firebase-messaging-sw] notification closed', event.notification && event.notification.data)
 })
