@@ -8,6 +8,7 @@ import { useI18n } from '../i18n/i18n.jsx'
 import { buildRouteForNow } from '../utils/routeLogic'
 import { onStopsFor, onStops } from '../utils/routeData'
 import { onBus } from '../utils/busData'
+import { subscribeToTopic } from '../utils/notifications'
 
 export default function StudentDashboard(){
   const { t } = useI18n()
@@ -42,6 +43,41 @@ export default function StudentDashboard(){
     } catch {}
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
   }, [])
+
+  // Auto-subscribe to student topic when notifications are enabled
+  useEffect(() => {
+    const STORAGE_KEY = 'ctrax_notifications_enabled'
+    const TOKEN_KEY = 'ctrax_notifications_token'
+    const subscribedKey = `ctrax_subscribed_student_${session.id}`
+
+    async function doSubscribe(token) {
+      try {
+        // avoid double subscribing
+        const already = window.localStorage.getItem(subscribedKey)
+        if (already === '1') return
+        const topic = `student-${session.id}`
+        await subscribeToTopic(token, topic)
+        try { window.localStorage.setItem(subscribedKey, '1') } catch {}
+      } catch (err) {
+        console.warn('Failed to subscribe student topic', err)
+      }
+    }
+
+    // If enabled and token present, subscribe immediately
+    try {
+      const enabled = window.localStorage.getItem(STORAGE_KEY) === '1'
+      const token = window.localStorage.getItem(TOKEN_KEY)
+      if (enabled && token) doSubscribe(token)
+    } catch (e) {}
+
+    // Listen for enable event (EnableNotifications will dispatch this)
+    function onEnabled(e) {
+      const token = e?.detail?.token
+      if (token) doSubscribe(token)
+    }
+    window.addEventListener('ctrax:notifications:enabled', onEnabled)
+    return () => window.removeEventListener('ctrax:notifications:enabled', onEnabled)
+  }, [session.id])
 
   // route/stop dropdown logic
   const busId = (form.busNo || '').trim()

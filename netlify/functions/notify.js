@@ -101,6 +101,71 @@ export async function handler(event) {
       return json(200, { id })
     }
 
+    // Event-driven sends: query DB for affected students/parents and send to their topics
+    if (action === 'event') {
+      // eventType: 'bus_started' | 'arriving' | 'arrived' | 'delay'
+      const { eventType, busNo, stop, routeId, extra } = body || {}
+      if (!eventType) return json(400, { error: 'Provide eventType for action=event' })
+      // load admin SDK to query Realtime Database
+      const mod = await import('firebase-admin')
+      const admin = (mod?.default || mod)
+      const db = admin.database()
+
+      // Find students matching busNo or stop or routeId
+      const snap = await db.ref('users/student').once('value')
+      const students = Object.values(snap.val() || {})
+
+      // Filter logic depending on event type
+      let targets = []
+      if (eventType === 'bus_started') {
+        // notify all students assigned to this bus (busNo)
+        targets = students.filter(s => s.busNo && String(s.busNo) === String(busNo))
+      } else if (eventType === 'arriving') {
+        // notify students whose stop matches
+        targets = students.filter(s => s.stop && String(s.stop) === String(stop))
+      } else if (eventType === 'arrived') {
+        // notify parents of students on this bus (arrival at destination)
+        targets = students.filter(s => s.busNo && String(s.busNo) === String(busNo))
+      } else if (eventType === 'delay') {
+        // notify students and parents on this bus
+        targets = students.filter(s => s.busNo && String(s.busNo) === String(busNo))
+      } else {
+        return json(400, { error: 'Unknown eventType' })
+      }
+
+      // craft messages for student and parent topics
+      const sendResults = []
+      for (const s of targets) {
+        const studentTopic = `student-${s.id}`
+        const parentTopic = `parent-${s.id}`
+        let studentMsg = null
+        let parentMsg = null
+        if (eventType === 'bus_started') {
+          studentMsg = { topic: studentTopic, notification: { title: 'Bus started', body: `Bus ${busNo} has started` } }
+          parentMsg = { topic: parentTopic, notification: { title: 'Bus started', body: `Bus ${busNo} has started for ${s.name}` } }
+        } else if (eventType === 'arriving') {
+          studentMsg = { topic: studentTopic, notification: { title: 'Bus arriving', body: `Bus ${busNo} arriving at your stop in 5 minutes` } }
+        } else if (eventType === 'arrived') {
+          parentMsg = { topic: parentTopic, notification: { title: 'Bus arrived', body: `Bus ${busNo} has reached the destination` } }
+        } else if (eventType === 'delay') {
+          const reason = extra?.reason || 'Delayed'
+          studentMsg = { topic: studentTopic, notification: { title: 'Bus delayed', body: `Bus ${busNo} delayed: ${reason}` } }
+          parentMsg = { topic: parentTopic, notification: { title: 'Bus delayed', body: `Bus ${busNo} delayed: ${reason}` } }
+        }
+        try {
+          if (studentMsg) sendResults.push(await msgSvc.send(studentMsg))
+        } catch (e) {
+          sendResults.push({ error: e?.message || String(e), target: studentTopic })
+        }
+        try {
+          if (parentMsg) sendResults.push(await msgSvc.send(parentMsg))
+        } catch (e) {
+          sendResults.push({ error: e?.message || String(e), target: parentTopic })
+        }
+      }
+      return json(200, { sent: sendResults.length, results: sendResults })
+    }
+
     if (action === 'subscribe') {
       // admin.messaging().subscribeToTopic accepts (tokens, topic)
       const resp = await msgSvc.subscribeToTopic(Array.isArray(token) ? token : [token], topic)

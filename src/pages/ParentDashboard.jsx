@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import MapView from '../shared/MapView'
 import BusList from '../shared/BusList'
 import LiveTimeline from '../shared/LiveTimeline'
 import { getSession, isRole, logout } from '../utils/auth'
+import { subscribeToTopic } from '../utils/notifications'
 import { useI18n } from '../i18n/i18n.jsx'
 
 export default function ParentDashboard(){
@@ -15,6 +16,40 @@ export default function ParentDashboard(){
   const session = getSession()
   const busId = (session?.busNo || '').trim()
   const highlight = (session?.stop || '').trim()
+
+  // Auto-subscribe parent to their student topic when notifications enabled
+  useEffect(() => {
+    const STORAGE_KEY = 'ctrax_notifications_enabled'
+    const TOKEN_KEY = 'ctrax_notifications_token'
+    const studentId = session?.studentId
+    if (!studentId) return
+    const subscribedKey = `ctrax_subscribed_parent_${studentId}`
+
+    async function doSubscribe(token) {
+      try {
+        const already = window.localStorage.getItem(subscribedKey)
+        if (already === '1') return
+        const topic = `parent-${studentId}`
+        await subscribeToTopic(token, topic)
+        try { window.localStorage.setItem(subscribedKey, '1') } catch {}
+      } catch (err) {
+        console.warn('Failed to subscribe parent topic', err)
+      }
+    }
+
+    try {
+      const enabled = window.localStorage.getItem(STORAGE_KEY) === '1'
+      const token = window.localStorage.getItem(TOKEN_KEY)
+      if (enabled && token) doSubscribe(token)
+    } catch (e) {}
+
+    function onEnabled(e) {
+      const token = e?.detail?.token
+      if (token) doSubscribe(token)
+    }
+    window.addEventListener('ctrax:notifications:enabled', onEnabled)
+    return () => window.removeEventListener('ctrax:notifications:enabled', onEnabled)
+  }, [session?.studentId])
   return (
   <div className="space-y-4 w-full max-w-none mx-0 px-0 sm:px-3 md:px-4">
       <div className="flex items-center justify-between px-3 sm:px-0">

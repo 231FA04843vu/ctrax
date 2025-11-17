@@ -116,6 +116,17 @@ export default function EnableNotifications(){
       setToken(t)
       try { await navigator.clipboard.writeText(t) } catch {}
 
+      // Persist token so other views (dashboards) can subscribe the user to topics
+      try {
+        window.localStorage.setItem('ctrax_notifications_token', t)
+        // Notify other parts of the app that notifications were enabled and provide token
+        try {
+          window.dispatchEvent(new CustomEvent('ctrax:notifications:enabled', { detail: { token: t } }))
+        } catch (evErr) {
+          console.warn('Failed to dispatch notifications enabled event', evErr)
+        }
+      } catch (e) {}
+
       // Persist one-time enabled flag so we don't show enable UI again
       try {
         window.localStorage.setItem(STORAGE_KEY, '1')
