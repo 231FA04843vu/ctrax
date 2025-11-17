@@ -7,15 +7,22 @@ import { getInstallations, getId as getInstallationsId, getToken as getInstallat
 // This component registers the service worker and retrieves a Web Push token via VAPID
 
 export default function EnableNotifications(){
+  const STORAGE_KEY = 'ctrax_notifications_enabled'
   const [supported, setSupported] = useState(false)
   const [permission, setPermission] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default')
   const [token, setToken] = useState('')
+  const [enabled, setEnabled] = useState(false)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [showSuccess, setShowSuccess] = useState(false)
 
   useEffect(() => {
     let mounted = true
     isSupported().then(ok => { if (mounted) setSupported(ok) }).catch(()=> setSupported(false))
+    try {
+      const flag = window?.localStorage?.getItem(STORAGE_KEY)
+      if (flag === '1') setEnabled(true)
+    } catch(e){}
     return () => { mounted = false }
   }, [])
 
@@ -109,6 +116,15 @@ export default function EnableNotifications(){
       setToken(t)
       try { await navigator.clipboard.writeText(t) } catch {}
 
+      // Persist one-time enabled flag so we don't show enable UI again
+      try {
+        window.localStorage.setItem(STORAGE_KEY, '1')
+      } catch (e) {}
+      setEnabled(true)
+      // Show a brief confirmation message then hide the UI
+      setShowSuccess(true)
+      setTimeout(() => setShowSuccess(false), 2500)
+
       // Foreground message listener
       onMessage(messaging, (payload) => {
         // Optionally handle an in-app banner here
@@ -126,25 +142,27 @@ export default function EnableNotifications(){
       Notifications are not supported in this browser. Try Chrome on Android.
     </div>
   )
+  // If notifications already enabled for this user, don't show the enable UI again.
+  if (enabled && !showSuccess) return null
 
   return (
     <div className="p-4 bg-white rounded border shadow-sm">
-      <div className="font-semibold mb-2">Enable notifications (Web Push)</div>
-      <p className="text-sm text-gray-600 mb-3">Allow notifications to receive alerts when buses are arriving or delayed. Works when you add the site to Home screen.</p>
-      <div className="flex items-center gap-2">
-        <button onClick={enable} disabled={loading} className="px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60">
-          {loading ? 'Enabling…' : 'Enable notifications'}
-        </button>
-        <span className="text-xs text-gray-600">Permission: {permission}</span>
-      </div>
-      {token && (
-        <div className="mt-3 text-xs break-all">
-          <div className="text-gray-600">Token (copied to clipboard):</div>
-          <div className="font-mono bg-gray-50 p-2 rounded border">{token}</div>
-        </div>
-      )}
-      {error && (
-        <div className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>
+      {showSuccess ? (
+        <div className="text-sm text-green-700 bg-green-50 border border-green-100 rounded p-3">Notifications enabled</div>
+      ) : (
+        <>
+          <div className="font-semibold mb-2">Enable notifications (Web Push)</div>
+          <p className="text-sm text-gray-600 mb-3">Allow notifications to receive alerts when buses are arriving or delayed. Works when you add the site to Home screen.</p>
+          <div className="flex items-center gap-2">
+            <button onClick={enable} disabled={loading} className="px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60">
+              {loading ? 'Enabling…' : 'Enable notifications'}
+            </button>
+            <span className="text-xs text-gray-600">Permission: {permission}</span>
+          </div>
+          {error && (
+            <div className="mt-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded p-2">{error}</div>
+          )}
+        </>
       )}
     </div>
   )
