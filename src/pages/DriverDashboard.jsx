@@ -2,12 +2,13 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import MapView from '../shared/MapView'
-import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
-import { onStopsFor, onStops } from '../utils/routeData'
+import { buildRouteForNow, haversineKm, getRoutePhase } from '../utils/routeLogic'
+import { onStopsFor } from '../utils/routeData'
 import { formatMinutes } from '../utils/format'
 import { isRole, getUsers, getSession, logout, updateProfile } from '../utils/auth'
 import { useI18n } from '../i18n/i18n.jsx'
-import { getBusFor, onBusFor, setBusFor, setSharingFor, setSimFor } from '../utils/busData'
+import { getBusFor, onBusFor, setBusFor, setSharingFor, setPositionFor } from '../utils/busData'
+import { startLocationTracking, stopLocationTracking, onLocationUpdate, isWithinRange, calculateSpeedKmh, completeStopTracking, resumeTracking, loadTrackingState, getLastPosition, getLastGoodPosition, isGpsQualityGood, onGpsQualityChange, requestLocationPermission } from '../utils/geolocation'
 
 export default function DriverDashboard(){
   const { t } = useI18n()
@@ -18,6 +19,11 @@ export default function DriverDashboard(){
   const [busId, setBusId] = useState('')
   const [bus, setBus] = useState({})
   const [sharing, setSharing] = useState(false)
+  const [currentSpeed, setCurrentSpeed] = useState(0)
+  const [gpsAccuracy, setGpsAccuracy] = useState(null)
+  const [isUsingFallbackPosition, setIsUsingFallbackPosition] = useState(false)  // True when GPS is poor and showing last good position
+  const locationUnsubscribeRef = useRef(null)
+  
   useEffect(() => {
     // derive assigned bus id from session/users (admin assignment)
     try {
@@ -38,6 +44,162 @@ export default function DriverDashboard(){
     })
     return off
   }, [busId])
+
+  // Real-time geolocation tracking for driver
+  useEffect(() => {
+    // Don't auto-start GPS on login. Only start when driver clicks "Start Sharing"
+    if (!busId) {
+      console.log('⏸️ Waiting for bus assignment before tracking can start')
+      return
+    }
+
+    // Check if we should resume tracking from previous session (only if sharing was active)
+    const previousState = loadTrackingState()
+    const shouldResumeTracking = previousState && previousState.busId === busId && previousState.enabled && sharing
+
+    // Only start tracking if sharing is active (either from current session or resumed)
+    if (!shouldResumeTracking && !sharing) {
+      console.log('⏸️ GPS tracking not started - waiting for driver to click Start Sharing')
+      return
+    }
+
+    // Start or resume location tracking only when sharing is ON
+    const started = shouldResumeTracking 
+      ? resumeTracking(busId)
+      : startLocationTracking({
+          enableHighAccuracy: true,
+          timeout: 10000,
+          maximumAge: 0,
+          updateInterval: 500
+        }, busId)
+
+    if (!started) {
+      console.error('❌ Failed to start location tracking')
+      return
+    }
+    
+    console.log('✅ Location tracking active for bus:', busId)
+
+    // Subscribe to GPS quality changes (good → bad → good)
+    const unsubscribeQuality = onGpsQualityChange((status) => {
+      const wasFallback = isUsingFallbackPosition
+      const isBad = !status.isGood
+      setIsUsingFallbackPosition(isBad)
+      
+      if (isBad && !wasFallback) {
+        console.warn('⚠️ GPS quality is poor, switching to last known good position')
+      } else if (!isBad && wasFallback) {
+        console.log('✅ GPS quality recovered, switching back to live position')
+      }
+    })
+
+    // Subscribe to location updates and push to database
+    const unsubscribe = onLocationUpdate((position) => {
+      try {
+        // Update accuracy display
+        setGpsAccuracy(Math.round(position.accuracy))
+        
+        // Convert from geolocation format to our array format [lat, lng]
+        const busPosition = [position.latitude, position.longitude]
+        
+        console.log('📍 GPS:', position.latitude.toFixed(6), position.longitude.toFixed(6), '| Accuracy:', Math.round(position.accuracy) + 'm')
+        
+        // Calculate current speed in km/h
+        const speedKmh = calculateSpeedKmh(position)
+        if (speedKmh !== null) {
+          setCurrentSpeed(Math.round(speedKmh * 10) / 10)
+        }
+
+        // Update driver position and metadata in database for this bus
+        // Send actual GPS position - even if accuracy is poor
+        // Only use fallback for minor accuracy degradation (50-500m), not extreme cases (>1000m)
+        // Ignore positions with accuracy > 10km (completely broken GPS)
+        try {
+          const ts = Date.now()
+          
+          // Completely reject positions with extreme inaccuracy (> 10km)
+          // These are GPS failures, not real positions
+          if (position.accuracy > 10000) {
+            console.warn('⚠️ GPS accuracy extremely poor (>10km):', Math.round(position.accuracy / 1000) + 'km', '- ignoring this position')
+            return
+          }
+          
+          // Determine which position to send: current or fallback
+          let positionToSend = busPosition
+          let usingFallback = false
+          
+          // Only use fallback for minor GPS degradation (50-500m range)
+          // For extreme inaccuracy (>500m), send actual position to avoid jumping to wrong location
+          if (position.accuracy > 50 && position.accuracy <= 500) {
+            const lastGood = getLastGoodPosition()
+            if (lastGood && lastGood.latitude && lastGood.longitude) {
+              positionToSend = [lastGood.latitude, lastGood.longitude]
+              usingFallback = true
+              console.log('💾 Using fallback position (minor GPS degradation):', positionToSend, '| Accuracy:', Math.round(position.accuracy) + 'm', '| Last good accuracy:', Math.round(lastGood.accuracy) + 'm')
+            }
+          }
+          
+          const patch = {
+            position: positionToSend,
+            lastUpdate: ts,
+            gpsAccuracy: Math.round(position.accuracy),
+            heading: position.heading ?? null,
+            usingFallback // Flag to indicate if showing fallback position
+          }
+          // Only include speedKmph if we have actual speed data (not zero/null)
+          const reportedSpeed = (position.speed != null) ? Math.round((position.speed * 3.6) * 10) / 10 : (speedKmh !== null ? Math.round(speedKmh * 10) / 10 : null)
+          if (reportedSpeed && reportedSpeed > 0) {
+            patch.speedKmph = reportedSpeed
+          }
+          // Use setBusFor to write a richer patch (keeps position array and metadata)
+          setBusFor(busId, patch).catch(err => console.error('❌ Failed to save position patch:', err))
+        } catch (err) {
+          console.error('❌ Failed to prepare position patch:', err)
+        }
+
+        // Check if driver reached final destination (within 500m)
+        const routePhase = getRoutePhase()
+        const routeInfo = buildRouteForNow(busId)
+        const orderedStops = routeInfo.orderedStops
+        
+        if (orderedStops && orderedStops.length > 0) {
+          const finalDestination = orderedStops[orderedStops.length - 1]
+          const hasReachedDestination = isWithinRange(
+            position,
+            finalDestination.position[0],
+            finalDestination.position[1],
+            0.5 // 500 meters
+          )
+
+          // Auto-stop at final destination for both morning and evening routes
+          // Morning: Vignan University, Evening: Sattenapalli (last stop in route)
+          if (hasReachedDestination) {
+            console.log(`🏁 Bus reached final destination: ${finalDestination.name}. Stopping GPS tracking.`)
+            // Completely stop tracking when reaching final destination
+            // This clears the persistent state too
+            setSharing(false)
+            try {
+              setSharingFor(busId, false)
+              completeStopTracking()  // Full stop with state cleanup
+            } catch (error) {
+              console.error('Error stopping tracking:', error)
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error updating position:', error)
+      }
+    })
+
+    // Cleanup: stop location tracking and unsubscribe when component unmounts or busId changes
+    // NOTE: Only stop listener subscription and watch, DON'T stop tracking completely
+    // Tracking will continue even after logout until destination is reached
+    return () => {
+      unsubscribe()
+      unsubscribeQuality()
+      stopLocationTracking()  // This just stops the watch, not the persistent tracking state
+    }
+  }, [busId, sharing])
   const [form, setForm] = useState({
     driverName: '',
     driverPhone: ''
@@ -81,10 +243,15 @@ export default function DriverDashboard(){
   // Route details for the driver
   const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
-    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
-    return onStops(() => setStopsTick(t => t + 1))
+    if (!busId) return undefined
+    return onStopsFor(busId, () => setStopsTick(t => t + 1))
   }, [busId])
-  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const routeNow = useMemo(() => {
+    if (!busId) {
+      return { orderedStops: [], timeline: [], phase: getRoutePhase(), startTime: '16:30', startPlace: 'Vignan University' }
+    }
+    return buildRouteForNow(busId)
+  }, [busId, stopsTick])
   const ordered = routeNow.orderedStops
   const timeline = routeNow.timeline
   const totalDistanceKm = useMemo(() => {
@@ -96,46 +263,125 @@ export default function DriverDashboard(){
     return Math.round(sum * 10) / 10
   }, [ordered])
   const todayAt = (hhmm) => {
-    const [h, m] = (hhmm || '00:00').split(':').map(Number)
+    const raw = String(hhmm || '00:00')
+    const parts = raw.split(':')
+    const h = Number(parts[0])
+    const m = Number(parts[1])
+    const safeH = Number.isFinite(h) && h >= 0 && h <= 23 ? h : 0
+    const safeM = Number.isFinite(m) && m >= 0 && m <= 59 ? m : 0
     const d = new Date()
-    d.setHours(h, m, 0, 0)
+    d.setHours(safeH, safeM, 0, 0)
     return d
   }
-  const fmtIST = (date) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
+  const fmtIST = (date) => {
+    const t = date instanceof Date ? date.getTime() : NaN
+    if (!Number.isFinite(t)) return '--:--'
+    return new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
+  }
   const startPlanned = todayAt(routeNow.startTime)
-  const maxOffset = Math.max(...timeline.map(t => t.plannedOffsetMins ?? 0))
+  const maxOffset = timeline.length ? Math.max(...timeline.map(t => t.plannedOffsetMins ?? 0)) : 0
   const endPlanned = new Date(startPlanned.getTime() + maxOffset * 60000)
   const endPlace = ordered[ordered.length - 1]?.name
   const toggleShare = async () => {
+    const willBeSharing = !sharing
+    
+    // If turning ON sharing, request GPS permission first
+    if (willBeSharing) {
+      console.log('📍 Requesting GPS permission...')
+      const hasPermission = await requestLocationPermission()
+      
+      if (!hasPermission) {
+        console.error('❌ Location permission denied')
+        alert('Location permission is required to share your bus location with students. Please enable location access in your device settings and try again.')
+        return // Don't toggle if permission denied
+      }
+      
+      console.log('✅ GPS permission granted, starting location tracking...')
+      
+      // Start location tracking immediately
+      if (busId) {
+        const started = startLocationTracking({
+          enableHighAccuracy: true,
+          timeout: 30000,
+          maximumAge: 0,
+          updateInterval: 500
+        }, busId)
+        
+        if (!started) {
+          console.error('❌ Failed to start location tracking')
+          alert('Failed to start GPS tracking. Please check your device location settings.')
+          return
+        }
+        console.log('✅ Location tracking started')
+      }
+      
+      // Wait up to 5 seconds for GPS to get first position
+      console.log('⏳ Waiting for GPS position...')
+      let positionFound = false
+      let attempts = 0
+      while (!positionFound && attempts < 50) {
+        const lastPos = getLastPosition?.()
+        if (lastPos && lastPos.latitude && lastPos.longitude) {
+          positionFound = true
+          console.log('✅ GPS position acquired:', lastPos.latitude.toFixed(6), lastPos.longitude.toFixed(6), '| Accuracy:', Math.round(lastPos.accuracy) + 'm')
+          break
+        }
+        attempts++
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+      
+      if (!positionFound) {
+        console.warn('⚠️ GPS position not acquired within 5 seconds, but proceeding with sharing')
+      }
+    }
+    
+    // Now actually toggle the sharing state
     setSharing((s) => {
       const ns = !s
-      try { if (busId) setSharingFor(busId, ns) } catch {}
-      // Also start/pause the shared simulation state so all clients move in sync
-      try {
+      try { 
         if (busId) {
-          const sim = (bus && bus.sim) || {}
+          // If turning ON sharing
           if (ns) {
-            const patch = {
-              active: true,
-              speedKmph: sim.speedKmph || bus.speedKmph || 30,
-              dir: sim.dir ?? 1,
-              mode: sim.mode || 'bounce',
-              lastUpdateAt: Date.now(),
-              offsetKm: typeof sim.offsetKm === 'number' ? sim.offsetKm : 0,
+            const lastPos = getLastPosition?.()
+            if (lastPos && lastPos.latitude && lastPos.longitude) {
+              try {
+                const ts = Date.now()
+                const patch = {
+                  position: [lastPos.latitude, lastPos.longitude],
+                  lastUpdate: ts,
+                  gpsAccuracy: Math.round(lastPos.accuracy || 0),
+                  heading: lastPos.heading ?? null
+                }
+                const reportedSpeed = (lastPos.speed != null) ? Math.round((lastPos.speed * 3.6) * 10) / 10 : null
+                if (reportedSpeed && reportedSpeed > 0) {
+                  patch.speedKmph = reportedSpeed
+                }
+                // Send position BEFORE updating sharing flag so students see real location immediately
+                setBusFor(busId, patch).catch(err => console.error('❌ Failed to send initial GPS position:', err))
+                console.log('✅ Sent initial GPS position to Firebase:', patch)
+              } catch (err) {
+                console.error('❌ Error preparing initial position:', err)
+              }
+            } else {
+              console.warn('⚠️ No GPS position available yet. Will send on next update...')
             }
-            setSimFor(busId, patch)
+            // Now set sharing flag
+            setSharingFor(busId, ns).catch(err => console.error('❌ Failed to set sharing flag:', err))
+            console.log('✅ Sharing enabled')
           } else {
-            const speed = Number(sim.speedKmph) || Number(bus.speedKmph) || 30
-            const dir = sim.dir === -1 ? -1 : 1
-            const last = Number(sim.lastUpdateAt) || Date.now()
-            const dtH = Math.max(0, (Date.now() - last) / 3600000)
-            const travelKm = (Number(sim.offsetKm) || 0) + dir * speed * dtH
-            const patch = { active: false, offsetKm: travelKm, lastUpdateAt: Date.now() }
-            setSimFor(busId, patch)
+            // Turning OFF sharing - stop location tracking
+            console.log('⏹️ Stopping location tracking')
+            stopLocationTracking()
+            setSharingFor(busId, ns).catch(err => console.error('❌ Failed to disable sharing flag:', err))
+            console.log('✅ Sharing disabled')
           }
         }
-      } catch {}
+      } catch (err) {
+        console.error('❌ Error in toggleShare:', err)
+      }
+      
       if (ns) {
+        // Starting real location sharing
         setShowShareHint(false)
         setShowNudge(false)
         try {
@@ -147,28 +393,6 @@ export default function DriverDashboard(){
     })
   }
 
-  // While sharing, vary speed in DB every 30s so all views show the same changing speed
-  useEffect(() => {
-    if (!busId || !sharing) return
-    const id = setInterval(() => {
-      try {
-        const sim = (bus && bus.sim) || {}
-        // fold traveled distance since last update to keep continuity
-        const speed = Number(sim.speedKmph) || Number(bus.speedKmph) || 30
-        const dir = sim.dir === -1 ? -1 : 1
-        const last = Number(sim.lastUpdateAt) || Date.now()
-        const dtH = Math.max(0, (Date.now() - last) / 3600000)
-        const travelKm = (Number(sim.offsetKm) || 0) + dir * speed * dtH
-        const newSpeed = 10 + Math.floor(Math.random() * 51) // 10..60
-        setSimFor(busId, {
-          speedKmph: newSpeed,
-          offsetKm: travelKm,
-          lastUpdateAt: Date.now(),
-        })
-      } catch {}
-    }, 30000)
-    return () => clearInterval(id)
-  }, [busId, sharing, bus?.sim?.speedKmph, bus?.sim?.lastUpdateAt, bus?.sim?.offsetKm, bus?.sim?.dir, bus?.speedKmph])
   const scrollToShare = () => {
     const el = shareSectionRef.current
     if (el && el.scrollIntoView) {
@@ -217,7 +441,7 @@ export default function DriverDashboard(){
       <div className="flex items-center justify-between px-3 sm:px-0">
         <h2 className="text-2xl font-semibold">{t('dashboard.driver')}</h2>
         <button
-          onClick={() => { try { setSharingDB(false); logout(); } catch {}; navigate('/account') }}
+          onClick={() => { try { setSharingFor(busId, false); logout(); } catch {}; navigate('/account') }}
           className="px-3 py-2 bg-red-600 text-white rounded shadow text-sm"
         >
           {t('action.logout')}
@@ -373,10 +597,33 @@ export default function DriverDashboard(){
       </div>
 
       <div className="bg-white p-3 sm:p-4 rounded-none md:rounded shadow" ref={shareSectionRef}>
-        <div className="flex items-center gap-3 mb-4">
-          <button onClick={toggleShare} disabled={!busId} className="px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60 disabled:cursor-not-allowed">{sharing ? t('action.stopSharing') : t('action.startSharing')}</button>
-          <span>{sharing ? 'Sharing live location' : 'Not sharing'}</span>
+        <div className="flex items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <button onClick={toggleShare} disabled={!busId} className="px-3 py-2 bg-indigo-600 text-white rounded disabled:opacity-60 disabled:cursor-not-allowed">{sharing ? t('action.stopSharing') : t('action.startSharing')}</button>
+            <span className="text-sm font-medium">{sharing ? '🔴 Sharing live location' : '⚪ Not sharing'}</span>
+          </div>
+          <div className="flex gap-4">
+            {gpsAccuracy && sharing && (
+              <div className="text-right">
+                <div className="text-xs text-gray-600">GPS Accuracy</div>
+                <div className={`text-lg font-bold ${gpsAccuracy < 20 ? 'text-green-600' : gpsAccuracy < 100 ? 'text-yellow-600' : 'text-red-600'}`}>
+                  {gpsAccuracy < 20 ? '✅' : gpsAccuracy < 100 ? '⚠️' : '❌'} {gpsAccuracy}m
+                </div>
+              </div>
+            )}
+            {sharing && currentSpeed > 0 && (
+              <div className="text-right">
+                <div className="text-xs text-gray-600">Current Speed</div>
+                <div className="text-lg font-bold text-indigo-600">{currentSpeed} km/h</div>
+              </div>
+            )}
+          </div>
         </div>
+        {sharing && bus?.position && (
+          <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-gray-700">
+            <div><strong>Current Location:</strong> {bus.position[0].toFixed(6)}, {bus.position[1].toFixed(6)}</div>
+          </div>
+        )}
         <MapView role="driver" sharing={sharing} busId={busId} />
       </div>
 

@@ -1,6 +1,7 @@
-import React, { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
-import { login } from '../../utils/auth'
+import React, { useState, useEffect } from 'react'
+import { Link, useNavigate, Navigate } from 'react-router-dom'
+import { login, isRole, getSession } from '../../utils/auth'
+import { requestLocationPermission } from '../../utils/geolocation'
 
 export default function DriverLogin(){
   const nav = useNavigate()
@@ -8,25 +9,53 @@ export default function DriverLogin(){
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [locationError, setLocationError] = useState('')
+  const [sessionChecked, setSessionChecked] = useState(false)
+  
+  // Check if already logged in as driver
+  useEffect(() => {
+    const session = getSession()
+    if (session && isRole('driver')) {
+      console.log('✅ Driver already logged in, redirecting to dashboard')
+      nav('/driver', { replace: true })
+    } else {
+      setSessionChecked(true)
+    }
+  }, [])
 
   const onSubmit = async (e) => {
     e.preventDefault()
     setError('')
+    setLocationError('')
     setLoading(true)
     try {
+      // First attempt to get location permission
+      const locationGranted = await requestLocationPermission()
+      if (!locationGranted) {
+        setLocationError('Location services are required for driver tracking. Please enable location access in your device settings.')
+        setLoading(false)
+        return
+      }
+
+      // Then perform login
       await Promise.resolve(login('driver', form.phone, form.password))
       nav('/driver')
     } catch (e) {
       setError(e.message || 'Login failed')
-    } finally {
       setLoading(false)
     }
+  }
+  
+  // If still checking session, show loading state
+  if (!sessionChecked) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>
   }
 
   return (
     <div className="max-w-md mx-auto bg-white p-6 rounded shadow">
       <h2 className="text-2xl font-semibold mb-4">Driver Login</h2>
       {error && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+      {locationError && <div className="mb-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">{locationError}</div>}
       <form onSubmit={onSubmit} className="space-y-3">
         <label className="block text-sm">
           <span className="text-gray-700">Phone number</span>

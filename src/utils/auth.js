@@ -35,17 +35,48 @@ function startListeners(){
 startListeners()
 
 // Rehydrate local session from Firebase Auth if possible and not explicitly logged out
+let rehydrationInProgress = false
 ;(function rehydrateFromAuth(){
   try {
     onAuthStateChanged(auth, async (fbUser) => {
-      if (!fbUser) return
+      // IMPORTANT: Only clear session on explicit logout, NEVER on Firebase auth null
+      // If fbUser is null on reload, it just means Firebase hasn't synced yet - trust localStorage
+      if (!fbUser) {
+        // User is not logged in to Firebase Auth
+        // Only clear session if user explicitly clicked logout button
+        if (localStorage.getItem(KEY_LOGOUT_FLAG) === '1') {
+          localStorage.removeItem(KEY_SESSION)
+          localStorage.removeItem(KEY_LOGOUT_FLAG)
+        }
+        // Otherwise leave localStorage session intact for next page load
+        rehydrationInProgress = false
+        return
+      }
+      
       // Respect explicit logout: if user logged out via app, don't auto-restore
-      if (localStorage.getItem(KEY_LOGOUT_FLAG) === '1') return
+      if (localStorage.getItem(KEY_LOGOUT_FLAG) === '1') {
+        rehydrationInProgress = false
+        return
+      }
+      
       const existing = safeParse(localStorage.getItem(KEY_SESSION), null)
-      if (existing && existing.email === (fbUser.email || '').toLowerCase()) return
       const em = (fbUser.email || '').toLowerCase()
-      if (!em) return
-      // Try to find profile in DB for any role
+      
+      // If session exists and matches the Firebase user email, it's already valid
+      // Just mark rehydration as done
+      if (existing && existing.email === em) {
+        console.log('✅ Session already valid in localStorage, skipping DB lookup')
+        rehydrationInProgress = false
+        return
+      }
+      
+      if (!em) {
+        rehydrationInProgress = false
+        return
+      }
+      
+      // Session doesn't match Firebase user, need to look up in DB
+      console.log('🔄 Firebase user changed, looking up profile in database...')
       const roles = ['admin', 'student', 'driver']
       for (const role of roles){
         try {
@@ -58,13 +89,19 @@ startListeners()
             setSession(session)
             // Also refresh cache for that role so UI reads synchronously
             cache[role] = list
+            console.log('✅ Rehydrated session from Firebase for role:', role)
             break
           }
         } catch {}
       }
+      rehydrationInProgress = false
     })
   } catch {}
 })()
+
+export function isRehydrating(){
+  return rehydrationInProgress
+}
 
 export function getUsers(role){
   // Return cached array for UI consumption (may be empty until first load)
@@ -74,7 +111,23 @@ export function getUsers(role){
 }
 
 export function getSession(){
-  return safeParse(localStorage.getItem(KEY_SESSION), null)
+  const session = safeParse(localStorage.getItem(KEY_SESSION), null)
+  const logoutFlag = localStorage.getItem(KEY_LOGOUT_FLAG)
+  
+  // Debug logging
+  if (!session) {
+    console.log('⚠️ No session found in localStorage')
+  } else {
+    console.log('✅ Session found in localStorage:', { role: session.role, id: session.id })
+  }
+  
+  if (logoutFlag === '1') {
+    console.log('🚫 Logout flag is set - clearing session')
+    return null
+  }
+  
+  // Otherwise return whatever is in localStorage (may be valid or null)
+  return session
 }
 
 export function setSession(session){
@@ -84,6 +137,10 @@ export function setSession(session){
     localStorage.setItem(KEY_SESSION, JSON.stringify(session))
     // Clear explicit logout flag on successful session set so auto-restore works next reload
     try { localStorage.removeItem(KEY_LOGOUT_FLAG) } catch {}
+    
+    // Also store a timestamp for debugging
+    try { localStorage.setItem('auth:lastLogin', Date.now().toString()) } catch {}
+    console.log('✅ Session saved to localStorage:', { role: session.role, id: session.id })
   }
 }
 
@@ -229,6 +286,16 @@ export async function login(role, identifier, password){
       const phoneNorm = idStr.replace(/\D+/g, '')
       user = list.find(u => String(u.phone || '').replace(/\D+/g, '') === phoneNorm && u.password === password)
     }
+
+    // If driver was authenticated via legacy DB lookup (typically phone login),
+    // establish Firebase Auth session as well so auth.uid-based DB rules work.
+    if (user && !auth.currentUser && user.email) {
+      try {
+        await signInWithEmailAndPassword(auth, String(user.email).toLowerCase(), password)
+      } catch {
+        // Keep legacy login working even if Auth account is missing.
+      }
+    }
   } else {
     const em = (identifier || '').trim().toLowerCase()
     // Prefer Firebase Auth for students
@@ -279,8 +346,10 @@ export async function loginParent(parentPhone, rollNo){
 }
 
 export function logout(){
+  console.log('🔴 User explicitly logged out')
   setSession(null)
   try { localStorage.setItem(KEY_LOGOUT_FLAG, '1') } catch {}
+  try { localStorage.removeItem('auth:lastLogin') } catch {}
   try { signOut(auth).catch(() => {}) } catch {}
 }
 

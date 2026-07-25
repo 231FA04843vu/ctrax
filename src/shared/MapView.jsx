@@ -4,9 +4,26 @@ import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
-import { onStopsFor, onStops } from '../utils/routeData'
-import { getBus, onBus, getBusFor, onBusFor, setPosition, setPositionFor, setSimFor } from '../utils/busData'
-import { computeSimulatedPos } from '../utils/sim'
+import { onStopsFor } from '../utils/routeData'
+import { getBusFor, onBusFor } from '../utils/busData'
+import { getLastGoodPosition } from '../utils/geolocation'
+
+const FALLBACK_CENTER = [16.2315471, 80.5526116]
+
+function isValidLatLng(pos) {
+  return Array.isArray(pos)
+    && pos.length === 2
+    && Number.isFinite(Number(pos[0]))
+    && Number.isFinite(Number(pos[1]))
+}
+
+function toLatLngFromStored(value) {
+  if (!value) return null
+  const lat = Number(value.latitude)
+  const lng = Number(value.longitude)
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng]
+  return null
+}
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -18,7 +35,7 @@ L.Icon.Default.mergeOptions({
 function FlyTo({ position }) {
   const map = useMap()
   useEffect(() => {
-    if (position) map.setView(position, 14, { animate: true })
+    if (isValidLatLng(position)) map.setView(position, 14, { animate: true })
   }, [position])
   return null
 }
@@ -30,12 +47,18 @@ function BoundsController({ points }){
     if (!points || points.length < 2) return
     try {
       const bounds = L.latLngBounds(points.map(p => L.latLng(p[0], p[1])))
-      // Fit to route with padding and limit panning outside padded bounds
-      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 })
-      map.setMaxBounds(bounds.pad(0.25))
-      const minZ = map.getBoundsZoom(bounds, true)
-      if (typeof minZ === 'number' && isFinite(minZ)) map.setMinZoom(minZ)
-    } catch {}
+      // Fit to route with reasonable padding - focus on stops and route
+      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 18, animate: true })
+      // Allow slight panning beyond bounds but not too far
+      map.setMaxBounds(bounds.pad(0.15))
+      // Set reasonable min zoom to see full route
+      const minZ = Math.max(10, map.getBoundsZoom(bounds, false))
+      if (typeof minZ === 'number' && isFinite(minZ)) {
+        map.setMinZoom(minZ)
+      }
+    } catch (err) {
+      console.warn('BoundsController error:', err)
+    }
   }, [points, map])
   return null
 }
@@ -43,19 +66,20 @@ function BoundsController({ points }){
 // simple lerp helper
 const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
 
-// bus icon (white bus on blue circle)
+// bus icon (large labeled badge so it stands out from stop markers)
 const busIcon = L.divIcon({
   className: '',
   html: `
-    <div style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9999px;background:#2563eb;box-shadow:0 1px 4px rgba(0,0,0,0.3)">
-      <svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='white'>
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:52px;height:52px;border-radius:9999px;background:linear-gradient(180deg,#22c55e 0%,#16a34a 100%);box-shadow:0 4px 14px rgba(0,0,0,0.35);border:3px solid white">
+      <svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='white' style='margin-bottom:1px'>
         <path d='M6 16a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm12 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z'/>
         <path fill-rule='evenodd' d='M7 3h10a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2v2a1 1 0 1 1-2 0v-2H8v2a1 1 0 0 1-2 0v-2a2 2 0 0 1-2-2V6a3 3 0 0 1 3-3zm10 2H7a1 1 0 0 0-1 1v6h12V6a1 1 0 0 0-1-1z' clip-rule='evenodd'/>
       </svg>
+      <div style="font-size:9px;line-height:1;font-weight:700;letter-spacing:0.08em;color:white;text-transform:uppercase">Bus</div>
     </div>
   `,
-  iconSize: [28, 28],
-  iconAnchor: [14, 14]
+  iconSize: [52, 52],
+  iconAnchor: [26, 26]
 })
 
 // stop icons (start/mid/end) as clean circular badges: start=play, mid=dot, end=stop
@@ -99,28 +123,36 @@ const myStopIcon = () => L.divIcon({
   iconSize: [36, 36],
   iconAnchor: [18, 18]
 })
-  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : getBus())
+  const effectiveBusId = String(busId || '').trim()
+  const [bus, setBus] = useState(effectiveBusId ? (getBusFor(effectiveBusId) || {}) : {})
   const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
-    if (busId) {
-      const off = onBusFor(busId, setBus)
-      // also subscribe to per-bus stops to refresh route when they arrive/change
-      const offStops = onStopsFor(busId, () => setStopsTick(t => t + 1))
+    if (effectiveBusId) {
+      const off = onBusFor(effectiveBusId, setBus)
+      const offStops = onStopsFor(effectiveBusId, () => setStopsTick(t => t + 1))
       return () => { off(); offStops() }
     }
-    const off = onBus(setBus)
-    const offGlobalStops = onStops(() => setStopsTick(t => t + 1))
-    return () => { off(); offGlobalStops() }
-  }, [busId])
-  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
-  const orderedStops = useMemo(() => routeNow.orderedStops.map(s => s.position), [routeNow])
+    setBus({})
+    return undefined
+  }, [effectiveBusId])
+  const routeNow = useMemo(() => {
+    if (!effectiveBusId) {
+      return { orderedStops: [], timeline: [], phase: 'evening', startTime: '16:30', startPlace: '' }
+    }
+    return buildRouteForNow(effectiveBusId)
+  }, [effectiveBusId, stopsTick])
+  const orderedStops = useMemo(
+    () => (routeNow.orderedStops || []).map(s => s.position).filter(isValidLatLng),
+    [routeNow]
+  )
+  const localGps = useMemo(() => toLatLngFromStored(getLastGoodPosition()), [stopsTick])
 
-  const [routePoints, setRoutePoints] = useState(orderedStops)
-  const [pos, setPos] = useState(orderedStops[0])
-  const [center, setCenter] = useState(orderedStops[0])
+  const initialPoint = localGps || orderedStops[0] || FALLBACK_CENTER
+  const [routePoints, setRoutePoints] = useState(orderedStops.length ? orderedStops : [initialPoint])
+  const [pos, setPos] = useState(initialPoint)
+  const [center, setCenter] = useState(initialPoint)
   const segIndexRef = useRef(0)
   const segTRef = useRef(0)
-  const speedRef = useRef(bus.speedKmph ?? 30)
   const dirRef = useRef(1) // 1 forward, -1 backward for continuous simulation
   const startMarkerRef = useRef(null)
   const endMarkerRef = useRef(null)
@@ -149,17 +181,11 @@ const myStopIcon = () => L.divIcon({
     async function build() {
       try {
         if (!orderedStops || orderedStops.length < 2) {
-          // Not enough points to request OSRM; just use given points
-          const pts = orderedStops.length ? [orderedStops[0]] : []
+          const pts = orderedStops.length ? [orderedStops[0]] : [initialPoint]
           if (!cancelled){
-            setRoutePoints(orderedStops)
-            setPos(orderedStops[0])
-            setCenter(orderedStops[0])
-            if (role === 'driver' && busId) {
-              try { setPositionFor(busId, orderedStops[0]) } catch {}
-            } else if (role === 'driver') {
-              try { setPosition(orderedStops[0]) } catch {}
-            }
+            setRoutePoints(pts)
+            setPos(pts[0])
+            setCenter(pts[0])
             segIndexRef.current = 0
             segTRef.current = 0
             dirRef.current = 1
@@ -178,30 +204,17 @@ const myStopIcon = () => L.divIcon({
           setRoutePoints(pts)
           setPos(pts[0])
           setCenter(pts[0])
-          if (role === 'driver') {
-            if (busId) {
-              try { setPositionFor(busId, pts[0]) } catch {}
-            } else {
-              try { setPosition(pts[0]) } catch {}
-            }
-          }
           segIndexRef.current = 0
           segTRef.current = 0
           dirRef.current = 1
         }
       } catch (e) {
         const fallback = densifyByKm(orderedStops)
-        if (!cancelled){
-          setRoutePoints(fallback)
-          setPos(fallback[0])
-          setCenter(fallback[0])
-          if (role === 'driver') {
-            if (busId) {
-              try { setPositionFor(busId, fallback[0]) } catch {}
-            } else {
-              try { setPosition(fallback[0]) } catch {}
-            }
-          }
+          if (!cancelled){
+          const safeFallback = (fallback && fallback.length) ? fallback : [FALLBACK_CENTER]
+          setRoutePoints(safeFallback)
+          setPos(safeFallback[0])
+          setCenter(safeFallback[0])
           segIndexRef.current = 0
           segTRef.current = 0
           dirRef.current = 1
@@ -216,122 +229,125 @@ const myStopIcon = () => L.divIcon({
   useEffect(() => {
     try {
       if (sessionStorage.getItem('mapStartEndHintsShown') === '1') return
-    } catch {}
+    } catch (err) {}
     const t1 = setTimeout(() => {
-      try { startMarkerRef.current && startMarkerRef.current.openPopup() } catch {}
+      try { startMarkerRef.current && startMarkerRef.current.openPopup() } catch (err) {}
     }, 600)
     const t2 = setTimeout(() => {
-      try { startMarkerRef.current && startMarkerRef.current.closePopup() } catch {}
+      try { startMarkerRef.current && startMarkerRef.current.closePopup() } catch (err) {}
     }, 2800)
     const t3 = setTimeout(() => {
-      try { endMarkerRef.current && endMarkerRef.current.openPopup() } catch {}
+      try { endMarkerRef.current && endMarkerRef.current.openPopup() } catch (err) {}
     }, 1000)
     const t4 = setTimeout(() => {
-      try { endMarkerRef.current && endMarkerRef.current.closePopup() } catch {}
-      try { sessionStorage.setItem('mapStartEndHintsShown', '1') } catch {}
+      try { endMarkerRef.current && endMarkerRef.current.closePopup() } catch (err) {}
+      try { sessionStorage.setItem('mapStartEndHintsShown', '1') } catch (err) {}
     }, 3200)
     return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); clearTimeout(t4) }
   }, [])
 
   // (Removed local random speed loop) — speed is now driven by DB sim for consistency across views
 
-  // DB-driven continuous simulation: compute position from sim params periodically
+  // Use real GPS position when available (bus.position), fallback to start of route
   useEffect(() => {
     if (!routePoints || routePoints.length < 1) return
     // initialize to first point for visual stability
-    setPos(routePoints[0])
-    setCenter(routePoints[0])
+    setPos(routePoints[0] || initialPoint)
+    setCenter(routePoints[0] || initialPoint)
+    
     const stepMs = 1000
     const tick = () => {
-      const sim = (bus && bus.sim) || null
-      const p = computeSimulatedPos(sim, routePoints) || routePoints[0]
-      setPos(p)
-      setCenter(p)
+      const liveLocalGps = toLatLngFromStored(getLastGoodPosition())
+      // For real GPS tracking: use bus.position if available and valid
+      if (isValidLatLng(bus?.position)) {
+        setPos(bus.position)
+        setCenter(bus.position)
+        return
+      }
+      if (liveLocalGps) {
+        setPos(liveLocalGps)
+        setCenter(liveLocalGps)
+        return
+      }
+      const fallback = isValidLatLng(routePoints[0]) ? routePoints[0] : FALLBACK_CENTER
+      setPos(fallback)
+      setCenter(fallback)
     }
     tick()
     const id = setInterval(tick, stepMs)
     simTickRef.current = id
     return () => { clearInterval(id); simTickRef.current = null }
-  }, [routePoints, bus?.sim])
-
-  // Start/pause simulation from sharing toggles (driver prop or bus.sharing)
-  useEffect(() => {
-    if (!busId && !bus?.id) return
-    const id = busId || bus.id
-    const sim = bus?.sim || {}
-    // desired active if driver role uses prop 'sharing', else use bus.sharing from DB
-    const desiredActive = (role === 'driver') ? !!sharing : !!(bus.sharing)
-    if (desiredActive) {
-      if (sim.active) return // already running
-      const patch = {
-        active: true,
-        speedKmph: sim.speedKmph || bus.speedKmph || 30,
-        dir: sim.dir ?? 1,
-        mode: sim.mode || 'bounce',
-        lastUpdateAt: Date.now(),
-        offsetKm: typeof sim.offsetKm === 'number' ? sim.offsetKm : 0,
-      }
-      try { setSimFor(id, patch) } catch {}
-    } else {
-      if (!sim.active) return // already paused
-      const speed = Number(sim.speedKmph) || Number(bus.speedKmph) || 30
-      const dir = sim.dir === -1 ? -1 : 1
-      const last = Number(sim.lastUpdateAt) || Date.now()
-      const dtH = Math.max(0, (Date.now() - last) / 3600000)
-      const travelKm = (Number(sim.offsetKm) || 0) + dir * speed * dtH
-      const patch = {
-        active: false,
-        offsetKm: travelKm,
-        lastUpdateAt: Date.now(),
-      }
-      try { setSimFor(id, patch) } catch {}
-    }
-  }, [sharing, role, busId, bus?.id, bus?.sim?.active, bus?.sim?.offsetKm, bus?.sim?.speedKmph, bus?.sim?.dir, bus?.sim?.lastUpdateAt, bus?.sharing, bus?.speedKmph])
-
-  // Position for non-driver roles is handled by the sim tick above
+  }, [routePoints, bus?.position])
 
   // Prefer constraining view to the full polyline when we have at least 2 points
   const boundsPoints = useMemo(() => {
-    if (routePoints && routePoints.length >= 2) return routePoints
+    if (routePoints && routePoints.length >= 2) return routePoints.filter(isValidLatLng)
     if (orderedStops && orderedStops.length >= 2) return orderedStops
     return null
   }, [routePoints, orderedStops])
+  const safePolylinePoints = useMemo(
+    () => (routePoints || []).filter(isValidLatLng),
+    [routePoints]
+  )
+
+  const safeCenter = isValidLatLng(center) ? center : FALLBACK_CENTER
+  const busPosForPopup = isValidLatLng(bus?.position) ? bus.position : null
+  const focusPoints = useMemo(() => {
+    const points = [...safePolylinePoints]
+    if (busPosForPopup) points.push(busPosForPopup)
+    if (localGps) points.push(localGps)
+    return points.filter(isValidLatLng)
+  }, [safePolylinePoints, busPosForPopup, localGps])
 
   return (
-    <MapContainer center={center} zoom={13} style={{ height: '460px', width: '100%' }} maxBoundsViscosity={1}>
-      <TileLayer
-        attribution='&copy; OpenStreetMap contributors'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      {boundsPoints && <BoundsController points={boundsPoints} />}
-      {/* Live bus marker */}
-      <Marker position={pos} icon={busIcon}>
-        <Popup>
-          {bus.name} — {bus.route}
-        </Popup>
-      </Marker>
-
-      {routeNow.orderedStops.map((s, i) => {
-        const norm = (v) => String(v || '').trim().toLowerCase()
-        const isMine = norm(s.name) === norm(highlightStopName)
-        const variant = i === 0 ? 'start' : (i === routeNow.orderedStops.length - 1 ? 'end' : 'mid')
-        return (
-        <Marker
-          key={`${s.name}-${i}`}
-          position={s.position}
-            icon={isMine ? myStopIcon() : stopIcon(variant)}
-          ref={i === 0 ? startMarkerRef : (i === routeNow.orderedStops.length - 1 ? endMarkerRef : null)}
-        >
+    <div style={{ position: 'relative', width: '100%', height: '500px' }} className="rounded overflow-hidden border border-gray-200">
+      <MapContainer center={safeCenter} zoom={13} style={{ height: '100%', width: '100%' }} maxBoundsViscosity={1}>
+        <TileLayer
+          attribution='&copy; OpenStreetMap contributors'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+        {focusPoints.length >= 2 && <BoundsController points={focusPoints} />}
+        {/* Live bus marker - shows driver's current GPS position */}
+        {isValidLatLng(pos) && <Marker position={pos} icon={busIcon} zIndexOffset={2000} riseOnHover>
           <Popup>
-            <div className="capitalize font-semibold">{s.name}</div>
-              <div className="text-xs text-gray-700">{isMine ? 'Your stop' : (i === 0 ? 'Start' : (i === routeNow.orderedStops.length - 1 ? 'Destination' : 'Stop'))}</div>
+            <div className="font-semibold">{bus.name || 'Bus'}</div>
+            <div className="text-xs text-gray-700">{bus.route || 'Route'}</div>
+            {busPosForPopup && (
+              <div className="text-xs text-gray-600 mt-1">
+                📍 {Number(busPosForPopup[0]).toFixed(5)}, {Number(busPosForPopup[1]).toFixed(5)}
+              </div>
+            )}
+            {bus?.gpsAccuracy && (
+              <div className="text-xs text-gray-600">
+                ⌛ Accuracy: {Math.round(bus.gpsAccuracy)}m
+              </div>
+            )}
           </Popup>
-        </Marker>
-        )
-  })}
+        </Marker>}
 
-      <Polyline positions={routePoints} />
-      <FlyTo position={center} />
-    </MapContainer>
+        {(routeNow.orderedStops || []).filter(s => isValidLatLng(s.position)).map((s, i, arr) => {
+          const norm = (v) => String(v || '').trim().toLowerCase()
+          const isMine = norm(s.name) === norm(highlightStopName)
+          const variant = i === 0 ? 'start' : (i === arr.length - 1 ? 'end' : 'mid')
+          return (
+          <Marker
+            key={`${s.name}-${i}`}
+            position={s.position}
+            icon={isMine ? myStopIcon() : stopIcon(variant)}
+            ref={i === 0 ? startMarkerRef : (i === arr.length - 1 ? endMarkerRef : null)}
+          >
+            <Popup>
+              <div className="capitalize font-semibold">{s.name}</div>
+              <div className="text-xs text-gray-700">{isMine ? '✅ Your stop' : (i === 0 ? 'Start' : (i === arr.length - 1 ? 'End' : 'Stop'))}</div>
+              <div className="text-xs text-gray-600 mt-1">📍 {s.position[0]?.toFixed(5)}, {s.position[1]?.toFixed(5)}</div>
+            </Popup>
+          </Marker>
+          )
+    })}
+
+        {safePolylinePoints.length >= 2 && <Polyline positions={safePolylinePoints} color="#3b82f6" weight={3} opacity={0.7} />}
+        <FlyTo position={safeCenter} />
+      </MapContainer>
+    </div>
   )
 }

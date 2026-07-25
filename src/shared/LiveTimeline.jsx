@@ -1,34 +1,47 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { buildRouteForNow, getProgress, haversineKm } from '../utils/routeLogic'
 import { formatMinutes } from '../utils/format'
-import { getBus, onBus, getBusFor, onBusFor } from '../utils/busData'
-import { onStopsFor, onStops } from '../utils/routeData'
-import { computeSimulatedPos } from '../utils/sim'
+import { getBusFor, onBusFor } from '../utils/busData'
+import { onStopsFor } from '../utils/routeData'
+import { getLastGoodPosition } from '../utils/geolocation'
 
 export default function LiveTimeline({ busId = null, highlightStopName = '' }){
-  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : getBus())
+  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : {})
   const sharing = bus.sharing ?? false
-  // Use a single source of truth for speed from simulation or bus config
-  const speed = Math.max(1, Number(bus?.sim?.speedKmph) || Number(bus?.speedKmph) || 30)
+  // Only use REAL speed from DB — don't fake it with defaults
+  const realSpeed = Number(bus?.speedKmph) || 0
+  const speed = realSpeed > 0 ? realSpeed : 1 // Fallback for calculations, but showRealETAs will be false if 0
   const [liveTick, setLiveTick] = useState(0)
   useEffect(() => {
-    if (busId){
-      const off = onBusFor(busId, setBus)
-      return off
+    if (!busId) {
+      setBus({})
+      return undefined
     }
-    const off = onBus(setBus)
+    const off = onBusFor(busId, setBus)
     return off
   }, [busId])
   const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
-    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
-    return onStops(() => setStopsTick(t => t + 1))
+    if (!busId) return undefined
+    return onStopsFor(busId, () => setStopsTick(t => t + 1))
   }, [busId])
-  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const routeNow = useMemo(() => {
+    if (!busId) return { orderedStops: [], timeline: [], startTime: '16:30', startPlace: 'Vignan University', phase: 'evening' }
+    return buildRouteForNow(busId)
+  }, [busId, stopsTick])
   const ordered = routeNow.orderedStops || []
   const originPos = ordered[0]?.position
-  // Compute position from DB-driven simulation params; fall back to origin
-  const currentPos = computeSimulatedPos(bus?.sim, ordered.map(s => s.position)) || (originPos || [0,0])
+  // Prefer live bus position from DB; fall back to last good GPS position; then to route origin
+  let currentPos = originPos || [0,0]
+  if (Array.isArray(bus?.position) && bus.position.length === 2) {
+    currentPos = bus.position  // Use live position if available
+  } else {
+    // Try fallback to last good GPS position
+    const lastGood = getLastGoodPosition()
+    if (lastGood && lastGood.latitude !== undefined && lastGood.longitude !== undefined) {
+      currentPos = [lastGood.latitude, lastGood.longitude]
+    }
+  }
 
   // Force-refresh every second so distance/ETA update continuously
   useEffect(() => {
@@ -38,7 +51,7 @@ export default function LiveTimeline({ busId = null, highlightStopName = '' }){
   // For timeline rows, exclude the very first origin if present and any terminal vignan (morning)
   const timelineStops = routeNow.timeline
 
-  // (Removed randomization) — keep speed consistent with DB simulation
+  // Randomization removed — using `bus.speedKmph` from DB (real data)
 
   const fmtIST = (date) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
   const todayAt = (hhmm) => {
@@ -50,17 +63,19 @@ export default function LiveTimeline({ busId = null, highlightStopName = '' }){
 
   const startPlanned = todayAt(routeNow.startTime)
   const now = new Date()
+  // Only show real ETAs if we have actual GPS position and real speed from driver
+  const hasRealPosition = Array.isArray(bus?.position) && bus.position.length === 2
+  const hasRealSpeed = bus?.speedKmph && bus.speedKmph > 0
+  const showRealETAs = sharing && hasRealPosition && hasRealSpeed
+  
   const rows = timelineStops.map((s, i) => {
     const distanceKm = haversineKm(currentPos, s.position)
     const etaMins = Math.max(0, Math.round((distanceKm / speed) * 60))
     const estArrival = new Date(now.getTime() + etaMins * 60000)
     const planned = new Date(startPlanned.getTime() + (s.plannedOffsetMins ?? 0) * 60000)
-    // Apply same recovery and clamp logic so ETA is within ±15 of planned
-    const rawDelay = Math.round((estArrival.getTime() - planned.getTime()) / 60000)
-    const recovery = Math.max(0.4, 1 - i * 0.18)
-    const adjusted = Math.round(rawDelay * recovery)
-    const delayMin = Math.max(-15, Math.min(15, adjusted))
-    const displayETA = new Date(planned.getTime() + delayMin * 60000)
+    // Show actual real delay without clamping or recovery
+    const realDelay = Math.round((estArrival.getTime() - planned.getTime()) / 60000)
+    const displayETA = new Date(planned.getTime() + realDelay * 60000)
 
     return {
       name: s.name,
@@ -84,6 +99,21 @@ export default function LiveTimeline({ busId = null, highlightStopName = '' }){
   const nextName = ordered[nextIdx]?.name
   const nextPos = ordered[nextIdx]?.position
   const distToNext = Math.round(haversineKm(currentPos, nextPos || ordered[ordered.length - 1]?.position || originPos || currentPos))
+  
+  // If bus is far from the nearest route stop, show it as "en route" or show coordinates
+  const isAtRouteStop = distToNearest <= ARRIVAL_RADIUS_KM
+  const nearestStopName = ordered[nearestIdx]?.name || startName
+  const distToNearestKm = Math.round(distToNearest * 10) / 10
+  
+  // Current location display logic
+  let currentLocationDisplay = arrivedName || startName
+  if (!isAtRouteStop && distToNearestKm > 0.5) {
+    // Far from any route stop - show as en route
+    currentLocationDisplay = `${distToNearestKm} km from ${nearestStopName}`
+  } else if (!isAtRouteStop) {
+    // Near but not at stop
+    currentLocationDisplay = `near ${nearestStopName}`
+  }
 
   // Robust departure tracking: mark the moment we leave a stop and show 'left ... ago' from a timestamp
   const arrivedPos = ordered[arrivedIdx]?.position || ordered[0]?.position || originPos || currentPos
@@ -132,28 +162,45 @@ export default function LiveTimeline({ busId = null, highlightStopName = '' }){
   const nextEtaMin = Math.max(0, next?.etaMins ?? 0)
   const nextDistKm = Math.max(0, next?.distanceKm ?? 0)
 
+  // Track how long bus has been at current location (for idle detection)
+  const lastMoveTimeRef = useRef(Date.now())
+  const lastPosRef = useRef(currentPos)
+  useEffect(() => {
+    const currentPosStr = JSON.stringify(currentPos)
+    const lastPosStr = JSON.stringify(lastPosRef.current)
+    if (currentPosStr !== lastPosStr) {
+      lastMoveTimeRef.current = Date.now()
+      lastPosRef.current = currentPos
+    }
+  }, [currentPos])
+  
+  // Calculate idle time
+  const idleMins = Math.round((Date.now() - lastMoveTimeRef.current) / 60000)
+  const isIdle = realSpeed === 0 || !hasRealSpeed
+
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
         <div className="text-sm font-medium">Live timeline</div>
-        {sharing ? (
+        {sharing && showRealETAs && isIdle ? (
+          // Idle: "Bus idle since X mins at [location] • Y km for next stop ([name])"
+          <div className="text-xs bg-amber-50 text-amber-800 px-2 py-1 rounded">
+            Bus idle since {idleMins > 0 ? formatMinutes(idleMins) : '0 min'} at <span className="capitalize font-semibold">{currentLocationDisplay}</span> • {nextDistKm} km for next stop (<span className="capitalize font-semibold">{nextName}</span>)
+          </div>
+        ) : sharing && showRealETAs && hasLeftArrived ? (
+          // Moving after leaving: "Left X mins ago at [location] • Y km to [next stop]"
           <div className="text-xs bg-blue-50 text-blue-800 px-2 py-1 rounded">
-            <>
-              Next stop <span className="capitalize font-semibold">{nextName}</span> — <span className="font-semibold">{nextEtaMin} min</span> • {`${nextDistKm} km`}
-              {arrivedIdx === 0 ? (
-                hasLeftArrived ? (
-                  <>
-                    {' '}• left <span className="capitalize font-semibold">{startName}</span> {leftLabel || 'just now'}
-                  </>
-                ) : (
-                  <>
-                    {' '}• started at <span className="capitalize font-semibold">{startName}</span>
-                  </>
-                )
-              ) : (
-                hasLeftArrived && <> • left {leftLabel || 'just now'}</>
-              )}
-            </>
+            Left {leftLabel || 'just now'} at <span className="capitalize font-semibold">{arrivedName || startName}</span> • {nextDistKm} km to <span className="capitalize font-semibold">{nextName}</span>
+          </div>
+        ) : sharing && showRealETAs ? (
+          // Moving but hasn't left yet: "Next stop [name] — X min • Y km"
+          <div className="text-xs bg-blue-50 text-blue-800 px-2 py-1 rounded">
+            Next stop <span className="capitalize font-semibold">{nextName}</span> — {nextEtaMin} min • {nextDistKm} km
+          </div>
+        ) : sharing && !showRealETAs ? (
+          // Sharing started but no real GPS/speed yet
+          <div className="text-xs bg-gray-50 text-gray-700 px-2 py-1 rounded border border-gray-200">
+            Bus at <span className="capitalize font-semibold">{currentLocationDisplay}</span> • {nextDistKm} km to <span className="capitalize font-semibold">{nextName}</span>
           </div>
         ) : (
           <div className="text-xs bg-orange-50 text-orange-800 px-2 py-1 rounded">
@@ -184,30 +231,6 @@ export default function LiveTimeline({ busId = null, highlightStopName = '' }){
             })}
           </div>
         </div>
-      </div>
-
-      {/* Bus chip */}
-      <div className="mt-3 text-xs">
-        {sharing ? (
-          <span className="inline-flex items-center gap-2 bg-green-100 text-green-800 px-2 py-1 rounded-full">
-            <span className="relative inline-flex">
-              <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-500 opacity-75" style={{ animationDuration: `${Math.max(0.6, 60/speed)}s` }}></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-green-600"></span>
-            </span>
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-              <path d="M6 16a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm12 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"/>
-              <path fillRule="evenodd" d="M7 3h10a3 3 0 0 1 3 3v8a2 2 0 0 1-2 2v2a1 1 0 1 1-2 0v-2H8v2a1 1 0 0 1-2 0v-2a2 2 0 0 1-2-2V6a3 3 0 0 1 3-3zm10 2H7a1 1 0 0 0-1 1v6h12V6a1 1 0 0 0-1-1z" clipPath="evenodd"/>
-            </svg>
-            {speed} km/h • {next.distanceKm} km to {next.name}
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-2 bg-orange-50 text-orange-800 px-2 py-1 rounded-full">
-            <span className="relative inline-flex">
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-orange-500"></span>
-            </span>
-            Bus not started
-          </span>
-        )}
       </div>
     </div>
   )

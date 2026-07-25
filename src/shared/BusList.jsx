@@ -1,28 +1,42 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { getBus, onBus, getBusFor, onBusFor } from '../utils/busData'
+import { getBusFor, onBusFor } from '../utils/busData'
 import { getUsers } from '../utils/auth'
 import { formatMinutes } from '../utils/format'
 import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
-import { onStopsFor, onStops } from '../utils/routeData'
-import { computeSimulatedPos } from '../utils/sim'
+import { onStopsFor } from '../utils/routeData'
+import { getLastGoodPosition } from '../utils/geolocation'
 
 export default function BusList({ busId = null, highlightStopName = '' }){
-  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : getBus())
+  const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : {})
   const sharing = bus.sharing ?? false
-  // Use a single source of truth for speed from simulation or bus config
-  const speed = Math.max(1, Number(bus?.sim?.speedKmph) || Number(bus?.speedKmph) || 30)
+  // Only use REAL speed from DB — don't fake it with defaults
+  const realSpeed = Number(bus?.speedKmph) || 0
+  const speed = realSpeed > 0 ? realSpeed : 1 // Fallback for calculations, but showRealETAs will be false if 0
   const [liveTick, setLiveTick] = useState(0)
   const [assignedDriver, setAssignedDriver] = useState(null)
 
   useEffect(() => {
-    if (busId){
-      const off = onBusFor(busId, setBus)
-      return off
+    if (!busId) {
+      setBus({})
+      return undefined
     }
-    const off = onBus(setBus)
+    const off = onBusFor(busId, setBus)
     return off
   }, [busId])
+
+  // Force refresh bus data every 2 seconds to catch sharing status changes
+  useEffect(() => {
+    const refreshInterval = setInterval(async () => {
+      if (!busId) return
+      const freshBus = getBusFor(busId)
+      if (freshBus && freshBus.sharing !== sharing) {
+        console.log('🔄 Bus sharing status updated:', freshBus.sharing)
+        setBus(freshBus)
+      }
+    }, 2000)
+    return () => clearInterval(refreshInterval)
+  }, [busId, sharing])
 
   // Track assigned driver from users cache so name/phone reflect updates everywhere
   useEffect(() => {
@@ -37,9 +51,9 @@ export default function BusList({ busId = null, highlightStopName = '' }){
     return () => clearInterval(id)
   }, [busId])
 
-  // (Removed randomization) — keep speed consistent with DB simulation
+  // Randomization removed — using `bus.speedKmph` from DB (real data)
 
-  // Live refresh so ETAs and distance update while sim runs
+  // Live refresh so ETAs and distance update while the bus moves
   useEffect(() => {
     const id = setInterval(() => setLiveTick((t) => (t + 1) % 1_000_000), 1000)
     return () => clearInterval(id)
@@ -48,13 +62,41 @@ export default function BusList({ busId = null, highlightStopName = '' }){
   // Route selection (morning/evening) and helpers
   const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
-    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
-    return onStops(() => setStopsTick(t => t + 1))
+    if (!busId) return undefined
+    return onStopsFor(busId, () => setStopsTick(t => t + 1))
   }, [busId])
-  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const routeNow = useMemo(() => {
+    if (!busId) return { orderedStops: [], timeline: [], startTime: '16:30', startPlace: 'Vignan University', phase: 'evening' }
+    return buildRouteForNow(busId)
+  }, [busId, stopsTick])
   const ordered = routeNow.orderedStops || []
   const originPos = ordered[0]?.position
-  const currentPos = computeSimulatedPos(bus?.sim, ordered.map(s => s.position)) || (originPos || [0,0])
+  // Prefer live bus position from DB; fall back to last good GPS position; then to route origin
+  let currentPos = originPos || [0,0]
+  if (Array.isArray(bus?.position) && bus.position.length === 2) {
+    currentPos = bus.position  // Use live position if available
+  } else {
+    // Try fallback to last good GPS position
+    const lastGood = getLastGoodPosition()
+    if (lastGood && lastGood.latitude !== undefined && lastGood.longitude !== undefined) {
+      currentPos = [lastGood.latitude, lastGood.longitude]
+    }
+  }
+  
+  // Log what position and speed we're using for ETA calculations
+  useEffect(() => {
+    if (sharing) {
+      console.log('🚌 BusList ETA calculation:', {
+        currentPos,
+        speed: Math.max(1, Number(bus?.speedKmph) || 30),
+        sharing,
+        hasBusPosition: Array.isArray(bus?.position) && bus.position.length === 2,
+        busSpeedKmph: bus?.speedKmph,
+        busData: { position: bus?.position, sharing: bus?.sharing, speedKmph: bus?.speedKmph }
+      })
+    }
+  }, [sharing, bus?.position, bus?.speedKmph])
+  
   const fmtIST = (date) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
   const todayAt = (hhmm) => {
     const [h, m] = hhmm.split(':').map(Number)
@@ -69,7 +111,12 @@ export default function BusList({ busId = null, highlightStopName = '' }){
   const etaFinalMins = Math.max(1, Math.round((distToFinalKm / Math.max(1, speed)) * 60))
   const computedBusEta = sharing ? `≈ ${formatMinutes(etaFinalMins)}` : '—'
 
-  // Build per-stop rows: planned vs estimated & delay
+  // Build per-stop rows: planned vs real ETA from actual GPS position and speed
+  const hasRealPosition = Array.isArray(bus?.position) && bus.position.length === 2
+  const hasRealSpeed = bus?.speedKmph && Number(bus.speedKmph) > 0
+  // Only compute real ETAs if we have actual GPS position and driver reported speed (not zero/null)
+  const showRealETAs = sharing && hasRealPosition && hasRealSpeed
+  
   const startPlanned = todayAt(routeNow.startTime)
   const now = new Date()
   // Build rows sequentially so delay propagates from previous arrival
@@ -81,13 +128,9 @@ export default function BusList({ busId = null, highlightStopName = '' }){
     const travelMins = Math.max(0, Math.round((distanceKm / Math.max(1, speed)) * 60))
     const estArrival = new Date(prevEtaTime.getTime() + travelMins * 60000)
     const planned = new Date(startPlanned.getTime() + (s.plannedOffsetMins ?? 0) * 60000)
-    const rawDelay = Math.round((estArrival.getTime() - planned.getTime()) / 60000)
-    // Optional recovery so later stops can catch up a bit
-    const recovery = Math.max(0.4, 1 - i * 0.18)
-    const adjusted = Math.round(rawDelay * recovery)
-    const delayMin = Math.max(-15, Math.min(15, adjusted))
-    const displayETA = new Date(planned.getTime() + delayMin * 60000)
-    // Set state for next leg to the displayed ETA and this stop's position
+    const realDelay = Math.round((estArrival.getTime() - planned.getTime()) / 60000)
+    const displayETA = new Date(planned.getTime() + realDelay * 60000)
+    // Set state for next leg to the actual ETA and this stop's position
     prevEtaTime = displayETA
     prevPos = s.position
 
@@ -95,11 +138,11 @@ export default function BusList({ busId = null, highlightStopName = '' }){
       name: s.name,
       planned: fmtIST(planned),
       eta: fmtIST(displayETA),
-      delayMin,
+      delayMin: realDelay,
       etaMins: travelMins,
       distanceKm: Math.round(distanceKm),
-      etaDisplay: sharing ? fmtIST(displayETA) : '—',
-      delayDisplay: sharing ? (delayMin === 0 ? 'On time' : (delayMin > 0 ? `+${delayMin} min` : `${delayMin} min`)) : '—'
+      etaDisplay: showRealETAs ? fmtIST(displayETA) : '—',
+      delayDisplay: showRealETAs ? (realDelay === 0 ? 'On time' : (realDelay > 0 ? `+${realDelay} min` : `${realDelay} min`)) : '—'
     })
   })
   const stopRows = rows

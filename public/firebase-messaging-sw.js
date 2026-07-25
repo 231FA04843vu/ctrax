@@ -30,6 +30,56 @@ self.addEventListener('activate', (event) => {
 // Log raw push events for deeper debugging
 self.addEventListener('push', (event) => {
   console.log('[firebase-messaging-sw] push event received', event)
+  // Fallback handler: many Android PWAs and some Chrome versions do not
+  // reliably surface notifications for data-only FCM messages when the
+  // Firebase helper doesn't trigger. Parse raw event.data and show a
+  // notification explicitly so the user sees it.
+  event.waitUntil((async () => {
+    try {
+      console.log('[firebase-messaging-sw] Notification.permission:', Notification.permission)
+      let payload = null
+      if (event.data) {
+        try {
+          const text = event.data.text()
+          console.log('[firebase-messaging-sw] push event data text:', text)
+          payload = JSON.parse(text)
+        } catch (err) {
+          console.warn('[firebase-messaging-sw] push.data parse failed, using text as body', err)
+          payload = { data: { body: event.data ? event.data.text() : '' } }
+        }
+      }
+
+      // payload may come in different shapes depending on how FCM was called
+      const notif = (payload && (payload.notification || payload)) || {}
+      const data = (payload && (payload.data || {})) || {}
+
+      const title = (notif && (notif.title || notif.body && 'CTraX')) || data.title || 'CTraX'
+      const body = (notif && (notif.body)) || data.body || ''
+
+      const options = {
+        body,
+        data: { ...data, _fromPushFallback: true },
+        icon: '/icons/icon-192.png',
+        badge: '/icons/icon-72.png',
+        vibrate: data.vibrate || [200, 100, 200],
+        requireInteraction: data.requireInteraction !== undefined ? !!data.requireInteraction : true,
+        tag: data.tag || 'ctrax-notification',
+        renotify: data.renotify !== undefined ? !!data.renotify : true,
+      }
+
+      console.log('[firebase-messaging-sw] Showing notification', { title, options })
+      await self.registration.showNotification(title, options)
+
+      const current = await self.registration.getNotifications()
+      console.log('[firebase-messaging-sw] current open notifications count:', current && current.length)
+
+      // optionally focus clients for diagnostics (not forcing focus)
+      const allClients = await clients.matchAll({ type: 'window', includeUncontrolled: true })
+      console.log('[firebase-messaging-sw] matched clients count:', allClients.length)
+    } catch (e) {
+      console.error('[firebase-messaging-sw] push fallback handler failed', e)
+    }
+  })())
 })
 
 // Handle background messages

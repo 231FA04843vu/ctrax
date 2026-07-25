@@ -2,7 +2,6 @@ import React, { useMemo, useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { getSession, logout, updateProfile, getUsers } from '../utils/auth'
 import { buildRouteForNow } from '../utils/routeLogic'
-import { getBus, onBus } from '../utils/busData'
 
 export default function Account(){
   const navigate = useNavigate()
@@ -31,16 +30,11 @@ export default function Account(){
   }, [])
 
   // route/stop options based on current bus
-  const routeNow = useMemo(() => buildRouteForNow(), [])
+  const routeNow = useMemo(() => buildRouteForNow((studentForm.busNo || '').trim() || null), [studentForm.busNo])
   const validBus = useMemo(() => {
-    const target = (getBus()?.id || '').trim().toLowerCase()
-    const entered = (studentForm.busNo || '').trim().toLowerCase()
-    return !!target && !!entered && entered === target
+    const entered = (studentForm.busNo || '').trim()
+    return !!entered && (routeNow?.orderedStops || []).length > 1
   }, [studentForm.busNo])
-  useEffect(() => {
-    const off = onBus(() => {})
-    return off
-  }, [])
   const stopOptions = useMemo(() => validBus ? ((routeNow?.orderedStops || []).map(s => s.name)) : [], [routeNow, validBus])
   useEffect(() => {
     if (session?.role !== 'student') return

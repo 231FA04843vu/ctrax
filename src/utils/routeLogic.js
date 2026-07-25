@@ -1,7 +1,6 @@
 // Utilities to decide route direction (morning/evening),
 // build ordered stops including origin, and provide timing hints.
-import { getStartTime } from './busData'
-import { getStops, getStopsFor } from './routeData'
+import { getStopsFor } from './routeData'
 
 export const toRad = (v) => (v * Math.PI) / 180
 export const haversineKm = (a, b) => {
@@ -27,18 +26,8 @@ export function getRoutePhase(now = new Date()){
 // Build ordered stops including origin and meta info
 export function buildRouteForNow(busId=null){
   const phase = getRoutePhase()
-  // Prefer per-bus stops; if none configured yet, fall back to global current route for compatibility
-  let stops = []
-  if (busId) {
-    const perBus = getStopsFor(busId)
-    if (Array.isArray(perBus) && perBus.length > 0) {
-      stops = perBus
-    } else {
-      stops = getStops()
-    }
-  } else {
-    stops = getStops()
-  }
+  // Use per-bus stops only. Avoid legacy global route path to prevent permission errors.
+  const stops = busId ? (getStopsFor(busId) || []) : []
   // Use a fixed Vignan University coordinate to avoid mutation from live movement
   const VIGNAN_POS = [16.2315471, 80.5526116]
   const vignan = { name: 'vignan university', position: VIGNAN_POS }
@@ -91,7 +80,7 @@ export function buildRouteForNow(busId=null){
   const ordered = hasStops ? [vignan, ...stops] : [vignan]
   return {
     phase,
-    startTime: getStartTime() || '16:30',
+    startTime: '16:30',
     startPlace: 'Vignan University',
     orderedStops: ordered,
     // timeline includes start (Vignan) and all subsequent stops, with Vignan offset 0

@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
+import { get, ref, onValue } from 'firebase/database'
+import { db } from '../utils/firebase'
 import MapView from '../shared/MapView'
 import BusList from '../shared/BusList'
 import LiveTimeline from '../shared/LiveTimeline'
 import { isRole, logout, getSession, getUsers, updateProfile } from '../utils/auth'
 import { useI18n } from '../i18n/i18n.jsx'
 import { buildRouteForNow } from '../utils/routeLogic'
-import { onStopsFor, onStops } from '../utils/routeData'
+import { onStopsFor } from '../utils/routeData'
 import { onBus } from '../utils/busData'
 import { subscribeToTopic } from '../utils/notifications'
 
@@ -27,24 +29,80 @@ export default function StudentDashboard(){
     stop: ''
   })
 
-  // hydrate student details from storage
+  // hydrate student details from Firebase (not just cache)
   useEffect(() => {
-    try {
-      const students = getUsers('student') || []
-      const me = students.find(s => s.id === session.id)
-      if (me){
-        setForm({
-          busNo: me.busNo || '',
-          rollNo: me.rollNo || '',
-          parentPhone: me.parentPhone || '',
-          stop: me.stop || ''
-        })
+    async function loadStudentData() {
+      try {
+        // Fetch directly from Firebase for fresh data
+        const snap = await get(ref(db, 'users/student'))
+        const allStudents = Object.values(snap.val() || {})
+        const me = allStudents.find(s => s.id === session.id)
+        if (me) {
+          setForm({
+            busNo: me.busNo || '',
+            rollNo: me.rollNo || '',
+            parentPhone: me.parentPhone || '',
+            stop: me.stop || ''
+          })
+          console.log('✅ Student data loaded from Firebase:', me)
+        }
+      } catch (err) {
+        console.error('Failed to load student data:', err)
+        // Fallback to cache
+        try {
+          const students = getUsers('student') || []
+          const me = students.find(s => s.id === session.id)
+          if (me){
+            setForm({
+              busNo: me.busNo || '',
+              rollNo: me.rollNo || '',
+              parentPhone: me.parentPhone || '',
+              stop: me.stop || ''
+            })
+          }
+        } catch {}
       }
-    } catch {}
+    }
+    if (session?.id) {
+      loadStudentData()
+    }
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current) }
-  }, [])
+  }, [session?.id])
 
-  // Auto-subscribe to student topic when notifications are enabled
+  // Set up real-time listener for student data changes
+  useEffect(() => {
+    if (!session?.id) return
+
+    try {
+      const studentRef = ref(db, `users/student`)
+      const unsubscribe = onValue(studentRef, (snap) => {
+        const allStudents = Object.values(snap.val() || {})
+        const me = allStudents.find(s => s.id === session.id)
+        if (me) {
+          setForm(prev => {
+            const updated = {
+              busNo: me.busNo || '',
+              rollNo: me.rollNo || '',
+              parentPhone: me.parentPhone || '',
+              stop: me.stop || ''
+            }
+            // Only update if data changed to avoid unnecessary re-renders
+            if (JSON.stringify(prev) !== JSON.stringify(updated)) {
+              console.log('📡 Student data updated in real-time:', me)
+              return updated
+            }
+            return prev
+          })
+        }
+      }, (err) => {
+        console.error('Realtime student data listener error:', err)
+      })
+      
+      return unsubscribe
+    } catch (err) {
+      console.warn('Failed to setup student data listener:', err)
+    }
+  }, [session?.id])
   useEffect(() => {
     const STORAGE_KEY = 'ctrax_notifications_enabled'
     const TOKEN_KEY = 'ctrax_notifications_token'
@@ -83,10 +141,13 @@ export default function StudentDashboard(){
   const busId = (form.busNo || '').trim()
   const [stopsTick, setStopsTick] = useState(0)
   useEffect(() => {
-    if (busId) return onStopsFor(busId, () => setStopsTick(t => t + 1))
-    return onStops(() => setStopsTick(t => t + 1))
+    if (!busId) return undefined
+    return onStopsFor(busId, () => setStopsTick(t => t + 1))
   }, [busId])
-  const routeNow = useMemo(() => buildRouteForNow(busId || null), [busId, stopsTick])
+  const routeNow = useMemo(() => {
+    if (!busId) return { orderedStops: [], timeline: [] }
+    return buildRouteForNow(busId)
+  }, [busId, stopsTick])
   const validBus = useMemo(() => {
     return !!busId && (routeNow?.orderedStops || []).length > 1
   }, [busId, routeNow])

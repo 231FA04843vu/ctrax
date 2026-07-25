@@ -28,7 +28,7 @@ function ensureArrayPosition(pos) {
 
 function notify() {
   subs.forEach(cb => {
-    try { cb(cache) } catch {}
+    try { cb(cache) } catch (err) {}
   })
 }
 
@@ -62,7 +62,7 @@ export function onBus(callback) {
   initOnce()
   subs.add(callback)
   // Fire once with current cache
-  try { callback(cache) } catch {}
+  try { callback(cache) } catch (err) {}
   return () => subs.delete(callback)
 }
 
@@ -95,7 +95,7 @@ async function ensureBusExists(id){
       // Minimal seed for new bus: only id; other fields to be filled explicitly by admin
       await set(r, { id })
     }
-  } catch {}
+  } catch (err) {}
 }
 
 export async function setBusFor(id, patch){
@@ -104,8 +104,11 @@ export async function setBusFor(id, patch){
 }
 
 export async function setPositionFor(id, position){
+  const timestamp = Date.now()
   await ensureBusExists(id)
-  await update(ref(db, pathForId(id)), { position })
+  console.log('💾 Setting position in Firebase:', { busId: id, position, timestamp })
+  await update(ref(db, pathForId(id)), { position, lastUpdate: timestamp })
+  console.log('✅ Position saved to buses/' + id)
 }
 
 export async function setSharingFor(id, sharing){
@@ -114,9 +117,12 @@ export async function setSharingFor(id, sharing){
 }
 
 // Simulation state helpers under buses/{id}/sim
+// Simulation helpers removed - simulation no longer supported. Keep API no-op for safety.
 export async function setSimFor(id, patch){
-  await ensureBusExists(id)
-  await update(ref(db, `${pathForId(id)}/sim`), patch)
+  // No-op: simulation feature removed. Use real GPS/tracking instead.
+  console.warn('setSimFor called but simulation support has been removed. Ignoring.')
+  try { await ensureBusExists(id) } catch (err) {}
+  return
 }
 
 export function getBusFor(id){
@@ -130,7 +136,7 @@ export function onBusFor(id, callback){
   const setCbs = busesSubs.get(id)
   setCbs.add(callback)
   const curr = busesCache.get(id)
-  if (curr) { try { callback(curr) } catch {} }
+  if (curr) { try { callback(curr) } catch (err) {} }
   return () => {
     setCbs.delete(callback)
   }
@@ -146,21 +152,25 @@ function startBusesListener(){
     const next = new Map()
     Object.values(val).forEach((b) => {
       const id = b.id || 'unknown'
-      next.set(id, {
+      const normalized = {
         ...b,
         position: ensureArrayPosition(b.position)
-      })
+      }
+      if (normalized.position && normalized.position.length === 2) {
+        console.log('📡 Bus listener received:', { id, position: normalized.position, sharing: normalized.sharing })
+      }
+      next.set(id, normalized)
     })
     // replace cache and notify per-bus subscribers
     busesCache.clear()
     next.forEach((v, k) => busesCache.set(k, v))
     next.forEach((bus, id) => {
       const cbs = busesSubs.get(id)
-      if (cbs) cbs.forEach(cb => { try { cb(bus) } catch {} })
+      if (cbs) cbs.forEach(cb => { try { cb(bus) } catch (err) {} })
     })
     // notify list subscribers with full array snapshot
     const list = Array.from(busesCache.values())
-    busesListSubs.forEach(cb => { try { cb(list) } catch {} })
+    busesListSubs.forEach(cb => { try { cb(list) } catch (err) {} })
   }, (err) => {
     console.error('buses listener error:', err)
   })
@@ -174,7 +184,7 @@ export function listBuses(){
 export function onBuses(callback){
   if (!busesInited) startBusesListener()
   busesListSubs.add(callback)
-  try { callback(listBuses()) } catch {}
+  try { callback(listBuses()) } catch (err) {}
   return () => busesListSubs.delete(callback)
 }
 
@@ -194,5 +204,4 @@ export default {
   setBusFor,
   setPositionFor,
   setSharingFor,
-  setSimFor,
 }
