@@ -4,6 +4,7 @@ import { getStopsFor } from './routeData'
 
 export const toRad = (v) => (v * Math.PI) / 180
 export const haversineKm = (a, b) => {
+  if (!a || !b || typeof a[0] !== 'number' || typeof b[0] !== 'number') return 0
   const R = 6371
   const dLat = toRad(b[0] - a[0])
   const dLon = toRad(b[1] - a[1])
