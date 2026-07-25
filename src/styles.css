@@ -1,8 +1,7 @@
 
 /* stylelint-disable at-rule-no-unknown */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.cjs";
 /* stylelint-enable at-rule-no-unknown */
 
 html, body, #root {
