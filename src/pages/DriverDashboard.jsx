@@ -7,8 +7,9 @@ import { onStopsFor } from '../utils/routeData'
 import { formatMinutes } from '../utils/format'
 import { isRole, getUsers, getSession, logout, updateProfile } from '../utils/auth'
 import { useI18n } from '../i18n/i18n.jsx'
-import { getBusFor, onBusFor, setBusFor, setSharingFor, setPositionFor } from '../utils/busData'
+import { getBusFor, onBusFor, setBusFor, setSharingFor, setPositionFor, setPhaseFor } from '../utils/busData'
 import { startLocationTracking, stopLocationTracking, onLocationUpdate, isWithinRange, calculateSpeedKmh, completeStopTracking, resumeTracking, loadTrackingState, getLastPosition, getLastGoodPosition, isGpsQualityGood, onGpsQualityChange, requestLocationPermission } from '../utils/geolocation'
+import { getTrafficETA } from '../utils/trafficAPI'
 
 export default function DriverDashboard(){
   const { t } = useI18n()
@@ -23,7 +24,143 @@ export default function DriverDashboard(){
   const [gpsAccuracy, setGpsAccuracy] = useState(null)
   const [isUsingFallbackPosition, setIsUsingFallbackPosition] = useState(false)  // True when GPS is poor and showing last good position
   const locationUnsubscribeRef = useRef(null)
+
+  // Idle tracking & Stop Reason
+  const [idleMins, setIdleMins] = useState(0)
+  const [showReasonPrompt, setShowReasonPrompt] = useState(false)
+  const [stopReasonInput, setStopReasonInput] = useState('')
+  const [isCustomReason, setIsCustomReason] = useState(false)
+  const [showThankYou, setShowThankYou] = useState(false)
+  const lastMoveTimeRef = useRef(Date.now())
+
+  // Traffic Notification
+  const [trafficDelayMins, setTrafficDelayMins] = useState(0)
+  const [showTrafficAlert, setShowTrafficAlert] = useState(false)
+
+  useEffect(() => {
+    if (!sharing) {
+      setIdleMins(0)
+      lastMoveTimeRef.current = Date.now()
+      return
+    }
+    
+    if (currentSpeed > 0) {
+      setIdleMins(0)
+      lastMoveTimeRef.current = Date.now()
+      setShowReasonPrompt(false)
+      // Automatically clear reason when moving
+      if (bus.stopReason && busId) {
+        setBusFor(busId, { stopReason: null }).catch(()=>{})
+      }
+    } else {
+      const interval = setInterval(() => {
+        const mins = Math.floor((Date.now() - lastMoveTimeRef.current) / 60000)
+        setIdleMins(mins)
+        if (mins >= 4 && !bus.stopReason && !showReasonPrompt) {
+          setShowReasonPrompt(true)
+        }
+      }, 10000)
+      return () => clearInterval(interval)
+    }
+  }, [currentSpeed, sharing, bus.stopReason, busId, showReasonPrompt])
+
+  const submitStopReason = async () => {
+    if (!stopReasonInput.trim() || !busId) return
+    try {
+      await setBusFor(busId, { stopReason: stopReasonInput.trim() })
+      setShowReasonPrompt(false)
+      setShowThankYou(true)
+      setTimeout(() => setShowThankYou(false), 3000)
+    } catch (e) {
+      console.error('Failed to submit stop reason', e)
+    }
+  }
+
+  // Poll for TomTom traffic ETA every 2 minutes when moving
+  useEffect(() => {
+    if (!sharing || !busId) return
+    let cancelled = false
+    
+    const checkTraffic = async () => {
+      const currentPos = getLastPosition?.() || getLastGoodPosition()
+      if (!currentPos || !currentPos.latitude || !currentPos.longitude) return
+      
+      const route = buildRouteForNow(busId)
+      const ordered = route.orderedStops
+      if (!ordered || ordered.length < 2) return
+      
+      const destination = ordered[ordered.length - 1].position
+      
+      const etaData = await getTrafficETA([currentPos.latitude, currentPos.longitude], destination)
+      if (!cancelled && etaData) {
+        const delayMins = Math.round(etaData.trafficDelaySeconds / 60)
+        
+        // Push the delay to Firebase so students can see updated ETAs without querying TomTom themselves
+        setBusFor(busId, { trafficDelayMins: delayMins }).catch(()=>{})
+
+        // Notify if traffic delay is 5 minutes or more
+        if (delayMins >= 5) {
+          setTrafficDelayMins(delayMins)
+          setShowTrafficAlert(true)
+          
+          // Optionally auto-set stop reason if very slow
+          if (currentSpeed < 10 && !bus.stopReason) {
+            setBusFor(busId, { stopReason: 'Heavy Traffic' }).catch(()=>{})
+          }
+        } else {
+          setShowTrafficAlert(false)
+        }
+      }
+    }
+    
+    // Check immediately, then every 2 minutes
+    checkTraffic()
+    const id = setInterval(checkTraffic, 120000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [sharing, busId, currentSpeed, bus.stopReason])
   
+  // Behavior Learning: Check for consistent deviations to update default route
+  useEffect(() => {
+    if (!busId) return
+    let cancelled = false
+    Promise.all([
+      import('firebase/database'),
+      import('../utils/firebase')
+    ]).then(([ { get, ref, set }, { db } ]) => {
+      if (cancelled) return
+      get(ref(db, `deviations/${busId}`)).then(snapshot => {
+        if (!snapshot.exists()) return
+        const deviations = snapshot.val()
+        const dates = Object.keys(deviations).sort().reverse() // Newest first
+        if (dates.length >= 2) {
+          const latestDev = deviations[dates[0]]?.position
+          const prevDev = deviations[dates[1]]?.position
+          if (latestDev && prevDev) {
+            import('../utils/routeLogic').then(({ haversineKm }) => {
+              // If deviation positions from the last 2 days are within 500m of each other
+              if (haversineKm(latestDev, prevDev) < 0.5) {
+                // Add it as a permanent waypoint if not already there
+                const existingWps = bus.waypoints || []
+                const isAlreadyWaypoint = existingWps.some(w => haversineKm(w.position, latestDev) < 0.5)
+                if (!isAlreadyWaypoint) {
+                  setBusFor(busId, { 
+                    waypoints: [...existingWps, { position: latestDev, timestamp: Date.now() }] 
+                  }).catch(()=>{})
+                  // Clean up old deviations to avoid re-triggering
+                  set(ref(db, `deviations/${busId}`), null)
+                }
+              }
+            })
+          }
+        }
+      })
+    })
+    return () => { cancelled = true }
+  }, [busId, bus.waypoints])
+
   useEffect(() => {
     // derive assigned bus id from session/users (admin assignment)
     try {
@@ -97,18 +234,17 @@ export default function DriverDashboard(){
     const unsubscribe = onLocationUpdate((position) => {
       try {
         // Update accuracy display
-        setGpsAccuracy(Math.round(position.accuracy))
+        setGpsAccuracy(Math.round(position.coords.accuracy))
         
         // Convert from geolocation format to our array format [lat, lng]
-        const busPosition = [position.latitude, position.longitude]
+        const busPosition = [position.coords.latitude, position.coords.longitude]
         
-        console.log('📍 GPS:', position.latitude.toFixed(6), position.longitude.toFixed(6), '| Accuracy:', Math.round(position.accuracy) + 'm')
+        console.log('📍 GPS:', position.coords.latitude.toFixed(6), position.coords.longitude.toFixed(6), '| Accuracy:', Math.round(position.coords.accuracy) + 'm')
         
-        // Calculate current speed in km/h
-        const speedKmh = calculateSpeedKmh(position)
-        if (speedKmh !== null) {
-          setCurrentSpeed(Math.round(speedKmh * 10) / 10)
-        }
+        // Convert native speed (m/s) to km/h, default to 0 if not available
+        const nativeSpeed = position?.coords?.speed
+        const speedKmh = nativeSpeed != null ? (nativeSpeed * 3.6) : 0
+        setCurrentSpeed(Math.round(speedKmh * 10) / 10)
 
         // Update driver position and metadata in database for this bus
         // Send actual GPS position - even if accuracy is poor
@@ -119,8 +255,8 @@ export default function DriverDashboard(){
           
           // Completely reject positions with extreme inaccuracy (> 10km)
           // These are GPS failures, not real positions
-          if (position.accuracy > 10000) {
-            console.warn('⚠️ GPS accuracy extremely poor (>10km):', Math.round(position.accuracy / 1000) + 'km', '- ignoring this position')
+          if (position.coords.accuracy > 10000) {
+            console.warn('⚠️ GPS accuracy extremely poor (>10km):', Math.round(position.coords.accuracy / 1000) + 'km', '- ignoring this position')
             return
           }
           
@@ -130,25 +266,24 @@ export default function DriverDashboard(){
           
           // Only use fallback for minor GPS degradation (50-500m range)
           // For extreme inaccuracy (>500m), send actual position to avoid jumping to wrong location
-          if (position.accuracy > 50 && position.accuracy <= 500) {
+          if (position.coords.accuracy > 50 && position.coords.accuracy <= 500) {
             const lastGood = getLastGoodPosition()
             if (lastGood && lastGood.latitude && lastGood.longitude) {
               positionToSend = [lastGood.latitude, lastGood.longitude]
               usingFallback = true
-              console.log('💾 Using fallback position (minor GPS degradation):', positionToSend, '| Accuracy:', Math.round(position.accuracy) + 'm', '| Last good accuracy:', Math.round(lastGood.accuracy) + 'm')
+              console.log('💾 Using fallback position (minor GPS degradation):', positionToSend, '| Accuracy:', Math.round(position.coords.accuracy) + 'm', '| Last good accuracy:', Math.round(lastGood.accuracy) + 'm')
             }
           }
           
           const patch = {
             position: positionToSend,
             lastUpdate: ts,
-            gpsAccuracy: Math.round(position.accuracy),
-            heading: position.heading ?? null,
+            gpsAccuracy: Math.round(position.coords.accuracy),
+            heading: position.coords.heading ?? null,
             usingFallback // Flag to indicate if showing fallback position
           }
-          // Only include speedKmph if we have actual speed data (not zero/null)
-          const reportedSpeed = (position.speed != null) ? Math.round((position.speed * 3.6) * 10) / 10 : (speedKmh !== null ? Math.round(speedKmh * 10) / 10 : null)
-          if (reportedSpeed && reportedSpeed > 0) {
+          const reportedSpeed = Math.round(speedKmh * 10) / 10
+          if (reportedSpeed != null) {
             patch.speedKmph = reportedSpeed
           }
           // Use setBusFor to write a richer patch (keeps position array and metadata)
@@ -165,9 +300,8 @@ export default function DriverDashboard(){
         if (orderedStops && orderedStops.length > 0) {
           const finalDestination = orderedStops[orderedStops.length - 1]
           const hasReachedDestination = isWithinRange(
-            position,
-            finalDestination.position[0],
-            finalDestination.position[1],
+            [position.coords.latitude, position.coords.longitude],
+            finalDestination.position,
             0.5 // 500 meters
           )
 
@@ -208,8 +342,8 @@ export default function DriverDashboard(){
   const [editing, setEditing] = useState(false)
   const saveTimerRef = useRef(null)
   const shareSectionRef = useRef(null)
-  const [showShareHint, setShowShareHint] = useState(true)
-  const [showNudge, setShowNudge] = useState(true)
+  const [showShareHint, setShowShareHint] = useState(false)
+  const [showNudge, setShowNudge] = useState(false)
 
   const onChange = (e) => {
     const { name, value } = e.target
@@ -282,6 +416,7 @@ export default function DriverDashboard(){
   const maxOffset = timeline.length ? Math.max(...timeline.map(t => t.plannedOffsetMins ?? 0)) : 0
   const endPlanned = new Date(startPlanned.getTime() + maxOffset * 60000)
   const endPlace = ordered[ordered.length - 1]?.name
+
   const toggleShare = async () => {
     const willBeSharing = !sharing
     
@@ -380,30 +515,11 @@ export default function DriverDashboard(){
         console.error('❌ Error in toggleShare:', err)
       }
       
-      if (ns) {
-        // Starting real location sharing
-        setShowShareHint(false)
-        setShowNudge(false)
-        try {
-          localStorage.setItem('driverShareHintHidden', '1')
-          localStorage.setItem('driverShareNudgeHidden', '1')
-        } catch {}
-      }
       return ns
     })
   }
 
-  const scrollToShare = () => {
-    const el = shareSectionRef.current
-    if (el && el.scrollIntoView) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-    // hide and persist nudge once used
-    setShowNudge(false)
-    try { localStorage.setItem('driverShareNudgeHidden', '1') } catch {}
-  }
   useEffect(() => {
-    // initialize persisted hint/nudge visibility
     // initialize form from driver profile if available
     try {
       const session = getSession()
@@ -415,29 +531,12 @@ export default function DriverDashboard(){
         }
       }
     } catch {}
-    // initialize persisted hint/nudge visibility
-    try {
-      const hintHidden = localStorage.getItem('driverShareHintHidden') === '1'
-      const nudgeHidden = localStorage.getItem('driverShareNudgeHidden') === '1'
-      if (hintHidden) setShowShareHint(false)
-      if (nudgeHidden) setShowNudge(false)
-    } catch {}
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
     }
   }, [])
-
-  // Auto-hide the mobile nudge after a few seconds
-  useEffect(() => {
-    if (!showNudge || sharing) return
-    const t = setTimeout(() => {
-      setShowNudge(false)
-      try { localStorage.setItem('driverShareNudgeHidden', '1') } catch {}
-    }, 4500)
-    return () => clearTimeout(t)
-  }, [showNudge, sharing])
   return (
-  <div className="space-y-4 w-full max-w-none mx-0 px-0 sm:px-3 md:px-4">
+  <div className="space-y-4 w-full max-w-none mx-0 px-0 sm:px-3 md:px-4 relative">
       <div className="flex items-center justify-between px-3 sm:px-0">
         <h2 className="text-2xl font-semibold">{t('dashboard.driver')}</h2>
         <button
@@ -448,33 +547,93 @@ export default function DriverDashboard(){
         </button>
       </div>
 
-      {/* Floating mobile nudge to scroll for live controls */}
-      {showNudge && !sharing && (
-        <button
-          type="button"
-          onClick={scrollToShare}
-          className="md:hidden fixed bottom-6 right-4 z-20 bg-indigo-600 text-white text-xs px-3 py-2 rounded-full shadow-lg flex items-center gap-2 opacity-90"
-        >
-          <span>Scroll for live controls</span>
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor" className="animate-bounce">
-            <path d="M12 16.5a1 1 0 0 1-.7-.29l-5-5a1 1 0 1 1 1.4-1.42L12 14.09l4.3-4.3a1 1 0 1 1 1.4 1.42l-5 5a1 1 0 0 1-.7.29z"/>
-          </svg>
-        </button>
+      {/* Traffic Alert Banner */}
+      {showTrafficAlert && (
+        <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded shadow-sm flex items-start gap-3">
+          <span className="text-xl">⚠️</span>
+          <div>
+            <div className="font-bold">Heavy Traffic Ahead</div>
+            <div className="text-sm">Expect a delay of approximately {trafficDelayMins} minutes on your route to the destination.</div>
+          </div>
+          <button 
+            onClick={() => setShowTrafficAlert(false)}
+            className="ml-auto text-red-500 hover:text-red-700"
+          >
+            ✕
+          </button>
+        </div>
       )}
 
-      {/* Mobile hint to find Start Sharing */}
-      {showShareHint && !sharing && (
-        <div className="md:hidden bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded p-3 flex items-start justify-between gap-3">
-          <div>
-            <div className="font-medium">Start sharing is below</div>
-            <div>Scroll to the bottom to tap <span className="font-semibold">Start Sharing</span> and begin live updates.</div>
-          </div>
-          <div className="flex flex-col gap-2">
-            <button onClick={scrollToShare} className="px-2 py-1 bg-amber-600 text-white text-xs rounded shadow">Jump</button>
-            <button onClick={() => { setShowShareHint(false); try { localStorage.setItem('driverShareHintHidden', '1') } catch {} }} className="px-2 py-1 border text-xs rounded">Hide</button>
+      {/* Stop Reason Prompt Modal */}
+      {showReasonPrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-5 overflow-hidden flex flex-col">
+            <h3 className="text-xl font-bold mb-2">Bus is stopped</h3>
+            <p className="text-gray-600 text-sm mb-4">
+              The bus has been stopped for {idleMins} minutes. Please provide a quick reason for the students waiting.
+            </p>
+            
+            <div className="space-y-2 mb-4">
+              {['🚦 Heavy Traffic', '🛑 Route Blocked', '🔧 Engine Breakdown'].map(r => (
+                <button 
+                  key={r}
+                  onClick={() => {
+                    setIsCustomReason(false)
+                    setStopReasonInput(r)
+                  }}
+                  className={`w-full text-left px-4 py-3 rounded border transition-colors ${stopReasonInput === r && !isCustomReason ? 'border-indigo-600 bg-indigo-50 text-indigo-700 font-medium' : 'border-gray-200 hover:bg-gray-50'}`}
+                >
+                  {r}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  setIsCustomReason(true)
+                  setStopReasonInput('')
+                }}
+                className={`w-full text-left px-4 py-3 rounded border transition-colors ${isCustomReason ? 'border-indigo-600 bg-indigo-50 text-indigo-700 font-medium' : 'border-gray-200 hover:bg-gray-50'}`}
+              >
+                ✍️ Other (Custom Reason)
+              </button>
+            </div>
+
+            {isCustomReason && (
+              <textarea 
+                className="w-full border border-gray-300 rounded p-3 text-sm focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none mb-4"
+                rows="2"
+                placeholder="Type reason here..."
+                value={stopReasonInput}
+                onChange={e => setStopReasonInput(e.target.value)}
+              />
+            )}
+            
+            <div className="flex justify-end gap-3 mt-auto">
+              <button 
+                onClick={() => setShowReasonPrompt(false)}
+                className="px-4 py-2 rounded font-medium text-gray-600 hover:bg-gray-100"
+              >
+                Skip
+              </button>
+              <button 
+                onClick={submitStopReason}
+                disabled={!stopReasonInput.trim()}
+                className="px-4 py-2 rounded font-medium bg-indigo-600 text-white disabled:opacity-50"
+              >
+                Submit Reason
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Thank You Toast */}
+      {showThankYou && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-gray-900 text-white px-6 py-3 rounded-full shadow-lg flex items-center gap-2 animate-bounce">
+          <span>✅</span>
+          <span className="font-medium text-sm">Thank you for the update!</span>
+        </div>
+      )}
+
 
       {/* Driver details card (view mode with side Edit button; collapses after save) */}
       <div className="bg-white p-4 rounded shadow">
@@ -624,7 +783,21 @@ export default function DriverDashboard(){
             <div><strong>Current Location:</strong> {bus.position[0].toFixed(6)}, {bus.position[1].toFixed(6)}</div>
           </div>
         )}
-        <MapView role="driver" sharing={sharing} busId={busId} />
+        <MapView 
+          role="driver" 
+          sharing={sharing} 
+          busId={busId} 
+          onDeviation={(pos) => {
+            if (!busId) return
+            const dateStr = new Date().toISOString().split('T')[0]
+            Promise.all([
+              import('firebase/database'),
+              import('../utils/firebase')
+            ]).then(([ { ref, set }, { db } ]) => {
+              set(ref(db, `deviations/${busId}/${dateStr}`), { position: pos, timestamp: Date.now() })
+            })
+          }}
+        />
       </div>
 
       {/* Enrolled Students List */}

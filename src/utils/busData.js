@@ -116,6 +116,11 @@ export async function setSharingFor(id, sharing){
   await update(ref(db, pathForId(id)), { sharing })
 }
 
+export async function setPhaseFor(id, phase){
+  await ensureBusExists(id)
+  await update(ref(db, pathForId(id)), { phase })
+}
+
 // Simulation state helpers under buses/{id}/sim
 // Simulation helpers removed - simulation no longer supported. Keep API no-op for safety.
 export async function setSimFor(id, patch){
@@ -204,4 +209,5 @@ export default {
   setBusFor,
   setPositionFor,
   setSharingFor,
+  setPhaseFor,
 }

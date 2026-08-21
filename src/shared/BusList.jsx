@@ -10,9 +10,10 @@ import { getLastGoodPosition } from '../utils/geolocation'
 export default function BusList({ busId = null, highlightStopName = '' }){
   const [bus, setBus] = useState(busId ? (getBusFor(busId) || {}) : {})
   const sharing = bus.sharing ?? false
-  // Only use REAL speed from DB — don't fake it with defaults
   const realSpeed = Number(bus?.speedKmph) || 0
-  const speed = realSpeed > 0 ? realSpeed : 1 // Fallback for calculations, but showRealETAs will be false if 0
+  // Display the real speed on the UI, but for ETA projections, we shouldn't assume the bus will travel the ENTIRE route at a crawling speed (e.g. 9 km/h GPS drift).
+  // We use a baseline route average of 30 km/h, unless the bus is currently traveling faster than that.
+  const etaCalcSpeed = Math.max(30, realSpeed)
   const [liveTick, setLiveTick] = useState(0)
   const [assignedDriver, setAssignedDriver] = useState(null)
 
@@ -67,8 +68,8 @@ export default function BusList({ busId = null, highlightStopName = '' }){
   }, [busId])
   const routeNow = useMemo(() => {
     if (!busId) return { orderedStops: [], timeline: [], startTime: '16:30', startPlace: 'Vignan University', phase: 'evening' }
-    return buildRouteForNow(busId)
-  }, [busId, stopsTick])
+    return buildRouteForNow(busId, bus?.phase)
+  }, [busId, stopsTick, bus?.phase])
   const ordered = routeNow.orderedStops || []
   const originPos = ordered[0]?.position
   // Prefer live bus position from DB; fall back to last good GPS position; then to route origin
@@ -88,14 +89,14 @@ export default function BusList({ busId = null, highlightStopName = '' }){
     if (sharing) {
       console.log('🚌 BusList ETA calculation:', {
         currentPos,
-        speed: Math.max(1, Number(bus?.speedKmph) || 30),
+        etaCalcSpeed,
+        realSpeed,
         sharing,
         hasBusPosition: Array.isArray(bus?.position) && bus.position.length === 2,
-        busSpeedKmph: bus?.speedKmph,
         busData: { position: bus?.position, sharing: bus?.sharing, speedKmph: bus?.speedKmph }
       })
     }
-  }, [sharing, bus?.position, bus?.speedKmph])
+  }, [sharing, bus?.position, bus?.speedKmph, etaCalcSpeed, realSpeed])
   
   const fmtIST = (date) => new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Kolkata' }).format(date)
   const todayAt = (hhmm) => {
@@ -108,14 +109,13 @@ export default function BusList({ busId = null, highlightStopName = '' }){
   // Dynamic ETA to final stop based on current speed
   const finalStop = ordered[ordered.length - 1]
   const distToFinalKm = haversineKm(currentPos, finalStop?.position || originPos || currentPos)
-  const etaFinalMins = Math.max(1, Math.round((distToFinalKm / Math.max(1, speed)) * 60))
+  const etaFinalMins = Math.max(1, Math.round((distToFinalKm / etaCalcSpeed) * 60))
   const computedBusEta = sharing ? `≈ ${formatMinutes(etaFinalMins)}` : '—'
 
   // Build per-stop rows: planned vs real ETA from actual GPS position and speed
   const hasRealPosition = Array.isArray(bus?.position) && bus.position.length === 2
-  const hasRealSpeed = bus?.speedKmph && Number(bus.speedKmph) > 0
-  // Only compute real ETAs if we have actual GPS position and driver reported speed (not zero/null)
-  const showRealETAs = sharing && hasRealPosition && hasRealSpeed
+  // Show ETAs when we have a real position and sharing is active
+  const showRealETAs = sharing && hasRealPosition
   
   const startPlanned = todayAt(routeNow.startTime)
   const now = new Date()
@@ -125,7 +125,7 @@ export default function BusList({ busId = null, highlightStopName = '' }){
   let prevPos = currentPos
   routeNow.timeline.forEach((s, i) => {
     const distanceKm = haversineKm(prevPos, s.position)
-    const travelMins = Math.max(0, Math.round((distanceKm / Math.max(1, speed)) * 60))
+    const travelMins = Math.max(0, Math.round((distanceKm / etaCalcSpeed) * 60))
     const estArrival = new Date(prevEtaTime.getTime() + travelMins * 60000)
     const planned = new Date(startPlanned.getTime() + (s.plannedOffsetMins ?? 0) * 60000)
     const realDelay = Math.round((estArrival.getTime() - planned.getTime()) / 60000)
@@ -175,10 +175,10 @@ export default function BusList({ busId = null, highlightStopName = '' }){
               {sharing ? (
                 <span className="font-medium inline-flex items-center gap-2">
                   <span className="relative inline-flex">
-                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-400 opacity-75" style={{ animationDuration: `${Math.max(0.6, 60/speed)}s` }}></span>
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-green-400 opacity-75" style={{ animationDuration: `${Math.max(0.6, 60/(realSpeed||30))}s` }}></span>
                     <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                   </span>
-                  {speed} km/h
+                  {realSpeed} km/h
                 </span>
               ) : (
                 <span className="font-medium inline-flex items-center gap-2 text-amber-700">

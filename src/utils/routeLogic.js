@@ -14,8 +14,33 @@ export const haversineKm = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(h))
 }
 
+// Helper to find shortest distance from point to a line segment
+export const distanceToSegmentKm = (p, v, w) => {
+  const l2 = (w[0] - v[0]) ** 2 + (w[1] - v[1]) ** 2;
+  if (l2 === 0) return haversineKm(p, v);
+  
+  // Consider latitude and longitude as flat for short distances (approximation for performance)
+  let t = ((p[0] - v[0]) * (w[0] - v[0]) + (p[1] - v[1]) * (w[1] - v[1])) / l2;
+  t = Math.max(0, Math.min(1, t));
+  
+  const projection = [v[0] + t * (w[0] - v[0]), v[1] + t * (w[1] - v[1])];
+  return haversineKm(p, projection);
+}
+
+// Helper to find shortest distance from point to a polyline
+export const distanceToPolylineKm = (p, polyline) => {
+  if (!polyline || polyline.length < 2) return 0;
+  let minDist = Infinity;
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const d = distanceToSegmentKm(p, polyline[i], polyline[i+1]);
+    if (d < minDist) minDist = d;
+  }
+  return minDist;
+}
+
 // Decide morning vs evening based on local time, with explicit windows.
-export function getRoutePhase(now = new Date()){
+export function getRoutePhase(explicitPhase = null, now = new Date()){
+  if (explicitPhase === 'morning' || explicitPhase === 'evening') return explicitPhase
   const h = now.getHours()
   const m = now.getMinutes()
   const mins = h * 60 + m
@@ -25,8 +50,8 @@ export function getRoutePhase(now = new Date()){
 }
 
 // Build ordered stops including origin and meta info
-export function buildRouteForNow(busId=null){
-  const phase = getRoutePhase()
+export function buildRouteForNow(busId=null, explicitPhase=null){
+  const phase = getRoutePhase(explicitPhase)
   // Use per-bus stops only. Avoid legacy global route path to prevent permission errors.
   const stops = busId ? (getStopsFor(busId) || []) : []
   // Use a fixed Vignan University coordinate to avoid mutation from live movement

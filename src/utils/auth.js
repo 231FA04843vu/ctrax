@@ -62,10 +62,10 @@ let rehydrationInProgress = false
       const existing = safeParse(localStorage.getItem(KEY_SESSION), null)
       const em = (fbUser.email || '').toLowerCase()
       
-      // If session exists and matches the Firebase user email, it's already valid
-      // Just mark rehydration as done
-      if (existing && existing.email === em) {
-        console.log('✅ Session already valid in localStorage, skipping DB lookup')
+      // If session exists, trust it. No need to overwrite from Firebase Auth.
+      // This prevents bugs where legacy phone logins or shared emails get overwritten.
+      if (existing) {
+        console.log('✅ Session already valid in localStorage, trusting it')
         rehydrationInProgress = false
         return
       }
@@ -268,6 +268,10 @@ export async function login(role, identifier, password){
   const snap = await get(ref(db, `users/${roleKey}`))
   const list = Object.values(snap.val() || {})
   let user = null
+  
+  // Clear any existing Firebase Auth session to prevent stale sessions from overwriting us on reload
+  try { await signOut(auth) } catch {}
+  
   if (roleKey === 'driver'){
     const idStr = String(identifier || '')
     const isEmail = idStr.includes('@')
@@ -309,7 +313,7 @@ export async function login(role, identifier, password){
     }
   }
   if (!user) throw new Error('Invalid credentials')
-  const baseSession = { id: user.id, role: user.role, email: user.email, name: user.name }
+  const baseSession = { id: user.id, role: roleKey, email: user.email, name: user.name }
   if (roleKey === 'driver' && user.busNo) baseSession.busNo = user.busNo
   setSession(baseSession)
   try { localStorage.removeItem(KEY_LOGOUT_FLAG) } catch {}

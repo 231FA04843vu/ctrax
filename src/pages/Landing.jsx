@@ -1,46 +1,49 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { onBuses } from '../utils/busData'
 import LogoScannerFlip from '../shared/LogoScannerFlip'
 import EnableNotifications from '../shared/EnableNotifications'
-import { Bus, Users, ShieldCheck, Map, Bell, Compass } from 'lucide-react'
-import PremiumIcon from '../shared/PremiumIcon'
 
 export default function Landing() {
-  const [busCount, setBusCount] = useState(0)
+  const [busCount, setBusCount] = useState(3)
   const [lastUpdated, setLastUpdated] = useState(() => new Date())
-  const [activeTab, setActiveTab] = useState('student')
 
   // Banner slider data
   const banners = useMemo(() => ([
     {
-      title: 'Next-Generation Transit',
-      subtitle: 'Accurate ETAs, dynamic maps, and a seamless commute.',
-      img: 'https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?q=80&w=2000&auto=format&fit=crop',
+      title: 'Track your college bus live',
+      subtitle: 'Accurate ETAs, clear maps, and smooth experience',
+      img: 'https://source.unsplash.com/1600x700/?school-bus,students',
       fallback: '/banners/bus-live.svg',
     },
     {
-      title: 'Peace of Mind for Parents',
-      subtitle: 'Instant arrival alerts and live monitoring.',
-      img: 'https://images.unsplash.com/photo-1512428559087-560fa5ceab42?q=80&w=2000&auto=format&fit=crop',
+      title: 'Parents stay informed',
+      subtitle: 'Arrival alerts and delay notifications',
+      img: 'https://source.unsplash.com/1600x700/?gps,smartphone,map',
       fallback: '/banners/parent-alerts.svg',
     },
     {
-      title: 'Empowering Drivers',
-      subtitle: 'Intuitive routing and live updates at your fingertips.',
-      img: 'https://images.unsplash.com/photo-1626305011746-13a6df7a0082?q=80&w=2000&auto=format&fit=crop',
+      title: 'Driver-friendly tools',
+      subtitle: 'One tap to start sharing and follow the route',
+      img: 'https://source.unsplash.com/1600x700/?bus,driver,cabin',
       fallback: '/banners/driver-tools.svg',
-    }
+    },
+    {
+      title: 'Transit that scales',
+      subtitle: 'City buses, campus shuttles, and intercity fleets',
+      img: 'https://source.unsplash.com/1600x700/?city-bus,transit',
+      fallback: '/banners/transit-scalable.svg',
+    },
   ]), [])
-  
   const [slide, setSlide] = useState(0)
   const autoRef = useRef(null)
 
+  // subscribe to realtime buses list and compute active count
   useEffect(() => {
     const off = onBuses((list) => {
       try {
-        const active = (list || []).filter(b => b && b.sharing).length
+        const active = (list || []).filter(b => b && (b.sharing || (b.sim && b.sim.active))).length
         setBusCount(active)
         setLastUpdated(new Date())
       } catch {
@@ -50,322 +53,395 @@ export default function Landing() {
     return off
   }, [])
 
+  // autoplay for banners
   useEffect(() => {
     if (autoRef.current) clearInterval(autoRef.current)
     autoRef.current = setInterval(() => {
       setSlide(s => (s + 1) % banners.length)
-    }, 5000)
+    }, 4000)
     return () => { if (autoRef.current) clearInterval(autoRef.current) }
   }, [banners.length])
 
+  // Simple reusable animation preset
   const fadeInUp = {
-    hidden: { opacity: 0, y: 30 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.6, ease: 'easeOut' } },
+    hidden: { opacity: 0, y: 40 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.8, ease: 'easeOut' } },
   }
 
+  // Detect whether page is running inside a native app / embedded webview
   const [isInApp, setIsInApp] = useState(false)
   useEffect(() => {
     try {
       const ua = navigator.userAgent || ''
+      // display-mode standalone (PWA) or navigator.standalone (iOS) indicate installed/standalone
       const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
         || (window.navigator && (window.navigator).standalone)
+
+      // common webview indicators: 'wv' token on Android, or Android.*Version/ in some webviews
       const isAndroidWebView = /; wv\)|Android.*Version\//i.test(ua) || /\bwv\b/i.test(ua)
+
+      // some in-app browsers (Facebook, Instagram) include identifiable tokens
       const isInAppBrowser = /FBAN|FBAV|Instagram|Line|UCBrowserMini/i.test(ua)
+
       setIsInApp(Boolean(isStandalone || isAndroidWebView || isInAppBrowser))
     } catch (e) {
       setIsInApp(false)
     }
   }, [])
 
-  const roleContent = {
-    student: {
-      icon: <PremiumIcon icon={Users} size={24} color="blue" variant="solid" glow />,
-      title: "For Students",
-      color: "from-blue-500 to-indigo-600",
-      bg: "bg-blue-50",
-      steps: [
-        "Connect with your assigned bus route.",
-        "Check accurate real-time ETAs.",
-        "View the bus approaching your stop on a live map.",
-        "Never wait in the rain or cold again."
-      ]
-    },
-    parent: {
-      icon: <PremiumIcon icon={ShieldCheck} size={24} color="purple" variant="solid" glow />,
-      title: "For Parents",
-      color: "from-purple-500 to-pink-500",
-      bg: "bg-purple-50",
-      steps: [
-        "Secure access using your child's credentials.",
-        "Monitor the vehicle's progress in real-time.",
-        "Receive push notifications for delays or arrivals.",
-        "Complete peace of mind."
-      ]
-    },
-    driver: {
-      icon: <PremiumIcon icon={Bus} size={24} color="emerald" variant="solid" glow />,
-      title: "For Drivers",
-      color: "from-emerald-400 to-teal-500",
-      bg: "bg-emerald-50",
-      steps: [
-        "Securely authenticated access to your route.",
-        "Start sharing your location with a single tap.",
-        "View passenger counts and upcoming stops.",
-        "Focus on driving while the app keeps everyone informed."
-      ]
-    }
-  }
-
   return (
-    <div className="w-full min-h-screen bg-[#fafcff] flex flex-col overflow-x-hidden font-sans">
-      
-      {/* BACKGROUND ELEMENTS FOR AESTHETICS */}
-      <div className="absolute top-0 inset-x-0 h-[600px] overflow-hidden -z-10 pointer-events-none">
-        <div className="absolute -top-[20%] -right-[10%] w-[60%] h-[80%] rounded-full bg-blue-100/50 blur-3xl opacity-60 mix-blend-multiply" />
-        <div className="absolute top-[10%] -left-[10%] w-[50%] h-[70%] rounded-full bg-indigo-100/40 blur-3xl opacity-60 mix-blend-multiply" />
-      </div>
-
-      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-24">
-        
-        {/* HERO SECTION */}
-        <motion.section 
-          className="flex flex-col lg:flex-row items-center justify-between gap-12 lg:gap-20 pt-8"
-          initial="hidden" animate="visible" variants={fadeInUp}
-        >
-          <div className="flex-1 space-y-8 text-center lg:text-left z-10">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/60 backdrop-blur-md border border-white/40 shadow-sm text-sm font-medium text-blue-700">
-              <span className="relative flex h-3 w-3">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
-              </span>
-              Smart Campus Transit
-            </div>
-            
-            <h1 className="text-4xl sm:text-5xl lg:text-7xl font-extrabold tracking-tight text-gray-900 leading-[1.1]">
-              Live, Safe, <br className="hidden lg:block"/>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600">
-                Reliable Transit
-              </span>
-            </h1>
-            
-            <p className="text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto lg:mx-0 leading-relaxed">
-              Experience the future of campus mobility. Real-time vehicle tracking, predictive ETAs, and a seamless interface designed for everyone.
-            </p>
-          </div>
-
-          <div className="flex-1 w-full max-w-md relative z-10">
-             {/* FLOATING GLASS PANEL */}
-             <motion.div 
-               className="relative rounded-3xl bg-white/40 backdrop-blur-xl border border-white/60 shadow-[0_8px_32px_0_rgba(31,38,135,0.07)] p-8 overflow-hidden"
-               whileHover={{ y: -5, boxShadow: "0 15px 40px -10px rgba(0,0,0,0.1)" }}
-             >
-               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-400 to-indigo-500" />
-               <div className="flex items-start justify-between">
-                 <div>
-                   <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider">System Status</p>
-                   <h3 className="text-4xl font-bold text-gray-900 mt-2 flex items-baseline gap-2">
-                     {busCount}
-                     <span className="text-lg font-medium text-gray-500">Active Buses</span>
-                   </h3>
-                 </div>
-                 <PremiumIcon icon={Bus} size={24} color="blue" variant="glass" glow />
-               </div>
-               
-               <div className="mt-8 pt-6 border-t border-gray-200/50">
-                 <div className="flex items-center gap-3">
-                   <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                   <p className="text-sm text-gray-600">Last heartbeat: <span className="font-medium">{lastUpdated.toLocaleTimeString()}</span></p>
-                 </div>
-                 <p className="text-xs text-gray-400 mt-2">
-                   Data streamed in real-time via WebSocket.
-                 </p>
-               </div>
-             </motion.div>
-          </div>
-        </motion.section>
-
-        {/* CAROUSEL SECTION */}
-        <motion.section 
-          className="relative w-full rounded-[2rem] overflow-hidden shadow-2xl"
-          variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
-        >
-          <div
-            className="flex transition-transform duration-1000 ease-[cubic-bezier(0.25,1,0.5,1)]"
-            style={{ width: `${banners.length * 100}%`, transform: `translateX(-${(slide * 100) / banners.length}%)` }}
-          >
-            {banners.map((b, i) => (
-              <div key={i} className="w-full relative h-[300px] sm:h-[400px] lg:h-[500px]" style={{ width: `${100 / banners.length}%` }}>
-                <img
-                  src={b.img}
-                  alt={b.title}
-                  className="absolute inset-0 w-full h-full object-cover"
-                  loading="lazy"
-                  onError={(e) => {
-                    if (e.currentTarget.dataset.fb !== '1' && b.fallback){
-                      e.currentTarget.dataset.fb = '1'
-                      e.currentTarget.src = b.fallback
-                    }
-                  }}
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/40 to-transparent" />
-                <div className="absolute bottom-0 left-0 w-full p-8 sm:p-12">
-                  <div className="max-w-3xl">
-                    <h3 className="text-white text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-4">{b.title}</h3>
-                    <p className="text-white/80 text-lg sm:text-xl font-medium">{b.subtitle}</p>
+    <div className="w-full min-h-screen bg-gray-50 flex flex-col overflow-x-hidden">
+  {/* Home page: center on mobile, full-bleed on desktop */}
+  <div className="w-full max-w-none mx-auto px-4 sm:px-6 lg:px-0 py-10 space-y-14">
+        {/* SLIDING BANNERS */}
+        <section className="relative w-full">
+          <div className="relative overflow-hidden rounded-2xl shadow bg-black/5">
+            <div
+              className="flex transition-transform duration-700 ease-out"
+              style={{ width: `${banners.length * 100}%`, transform: `translateX(-${(slide * 100) / banners.length}%)` }}
+            >
+              {banners.map((b, i) => (
+                <div key={i} className="w-full" style={{ width: `${100 / banners.length}%` }}>
+                  <div className="relative w-full h-[220px] sm:h-[300px] md:h-[380px] lg:h-[460px]">
+                    <img
+                      src={b.img}
+                      alt={b.title}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      loading="lazy"
+                      onError={(e) => {
+                        const el = e.currentTarget
+                        if (el.dataset.fb !== '1' && b.fallback){
+                          el.dataset.fb = '1'
+                          el.src = b.fallback
+                        }
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-6">
+                      <div className="max-w-4xl">
+                        <div className="inline-block bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-medium text-gray-800 mb-2">Campus transit</div>
+                        <h3 className="text-white text-xl sm:text-2xl md:text-3xl font-bold drop-shadow">{b.title}</h3>
+                        <p className="text-white/90 text-sm sm:text-base drop-shadow mt-1">{b.subtitle}</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
 
-          {/* Custom Dots */}
-          <div className="absolute bottom-8 right-8 flex items-center gap-3">
-            {banners.map((_, i) => (
-              <button
-                key={i}
-                aria-label={`Go to slide ${i+1}`}
-                onClick={() => setSlide(i)}
-                className={`transition-all duration-300 rounded-full h-2 ${
-                  i === slide ? 'w-8 bg-white' : 'w-2 bg-white/50 hover:bg-white/80'
-                }`}
-              />
-            ))}
+            {/* Controls */}
+            <button
+              aria-label="Previous slide"
+              onClick={() => setSlide(s => (s - 1 + banners.length) % banners.length)}
+              className="absolute left-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/80 hover:bg-white shadow"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button
+              aria-label="Next slide"
+              onClick={() => setSlide(s => (s + 1) % banners.length)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/80 hover:bg-white shadow"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#111827" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+
+            {/* Dots */}
+            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-white/70 backdrop-blur px-2 py-1 rounded-full shadow">
+              {banners.map((_, i) => (
+                <button
+                  key={i}
+                  aria-label={`Go to slide ${i+1}`}
+                  onClick={() => setSlide(i)}
+                  className={`w-2 h-2 rounded-full ${i === slide ? 'bg-gray-900' : 'bg-gray-400'}`}
+                />
+              ))}
+            </div>
           </div>
+        </section>
+        
+        {/* HERO SECTION */}
+        <motion.section
+          className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-center"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.3 }}
+        >
+          <motion.div className="space-y-6" variants={fadeInUp}>
+            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-gray-900">
+              CTraX — Live, Safe, Reliable
+            </h1>
+            <p className="text-base sm:text-lg text-gray-700">
+              Real-time bus tracking for campuses. Parents follow vehicles live, students see ETAs, 
+              and drivers receive route updates. Designed for mobile and desktop — easily integrates 
+              a live WebSocket stream.
+            </p>
+
+            <div className="flex flex-wrap gap-3">
+              <Link to="/login/student" className="inline-flex items-center px-5 py-3 bg-blue-600 text-white rounded-lg shadow hover:scale-105 transform transition-all duration-300">
+                Student Login
+              </Link>
+              <Link to="/login/parent" className="inline-flex items-center px-5 py-3 bg-indigo-600 text-white rounded-lg shadow hover:scale-105 transform transition-all duration-300">
+                Parent Login
+              </Link>
+              <Link to="/driver" className="inline-flex items-center px-5 py-3 bg-green-600 text-white rounded-lg shadow hover:scale-105 transform transition-all duration-300">
+                Driver Dashboard
+              </Link>
+            </div>
+
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {[
+                { label: 'Real-time', value: 'Live locations' },
+                { label: 'Safe', value: 'Secure routes' },
+                { label: 'Reliable', value: 'Driver check-ins' },
+              ].map(({ label, value }) => (
+                <div key={label} className="p-4 bg-white rounded-lg border shadow-sm hover:shadow-md transition-all duration-300">
+                  <div className="text-sm text-gray-500">{label}</div>
+                  <div className="text-md font-semibold">{value}</div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+
+          <motion.aside className="bg-white rounded-lg shadow p-6" variants={fadeInUp}>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-sm text-gray-500">Buses Active</div>
+                <div className="text-3xl font-bold">{busCount}</div>
+                <div className="text-xs text-gray-400">Updated: {lastUpdated.toLocaleTimeString()}</div>
+              </div>
+              <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center">
+                <svg width="44" height="44" viewBox="0 0 24 24" fill="none">
+                  <rect x="2" y="3" width="8" height="14" rx="1" fill="#60A5FA" />
+                  <rect x="14" y="7" width="8" height="10" rx="1" fill="#34D399" />
+                </svg>
+              </div>
+            </div>
+
+            <div className="mt-4 h-48 sm:h-56 lg:h-64 bg-gradient-to-br from-sky-50 to-green-50 rounded-md flex items-center justify-center text-gray-500">
+              <div className="text-center px-4">
+                <div className="font-medium">Map preview</div>
+                <div className="text-sm mt-1">Interactive map available in dashboards</div>
+              </div>
+            </div>
+
+            <p className="mt-4 text-sm text-gray-600">
+              Demo feed — replace with WebSocket for production to stream vehicle positions.
+            </p>
+          </motion.aside>
         </motion.section>
 
-        {/* FEATURES GRID */}
+        {/* FEATURES SECTION */}
         <motion.section
-          className="grid grid-cols-1 md:grid-cols-3 gap-8"
-          variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
+          className="grid grid-cols-1 md:grid-cols-3 gap-6"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
         >
           {[
-            { icon: <PremiumIcon icon={Map} size={28} color="blue" variant="glass" glow />, title: 'Live Map & ETAs', desc: 'Watch your vehicle move on a high-performance interactive map with accurate predictive arrival times.' },
-            { icon: <PremiumIcon icon={Compass} size={28} color="emerald" variant="glass" glow />, title: 'Driver Telemetry', desc: 'Seamless routing, stop management, and live location broadcasting crafted for driver safety and focus.' },
-            { icon: <PremiumIcon icon={Bell} size={28} color="purple" variant="glass" glow />, title: 'Instant Alerts', desc: 'Stay ahead with smart push notifications for arrivals, delays, and critical system updates.' },
-          ].map((feat, idx) => (
+            { title: 'Live Tracking & ETA', desc: 'See vehicles on the map and accurate ETAs for every stop.' },
+            { title: 'Driver Tools', desc: 'Routes, check-ins, and incident reporting for drivers.' },
+            { title: 'Parent Alerts', desc: 'Push notifications for arrival, delays, or safety events.' },
+          ].map(({ title, desc }) => (
             <motion.div
-              key={idx}
-              className="group relative p-8 bg-white rounded-3xl shadow-[0_2px_20px_rgba(0,0,0,0.03)] border border-gray-100 hover:shadow-xl transition-all duration-300 overflow-hidden"
-              whileHover={{ y: -8 }}
+              key={title}
+              className="p-5 bg-white rounded-lg border shadow-sm hover:shadow-md hover:-translate-y-1 transition-all duration-300"
+              variants={fadeInUp}
             >
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-full blur-3xl -mr-10 -mt-10 transition-transform group-hover:scale-150 duration-700 ease-out" />
-              <div className="relative z-10">
-                <div className="mb-6">
-                  {feat.icon}
-                </div>
-                <h4 className="text-xl font-bold text-gray-900 mb-3">{feat.title}</h4>
-                <p className="text-gray-600 leading-relaxed">{feat.desc}</p>
-              </div>
+              <h4 className="font-semibold">{title}</h4>
+              <p className="text-sm text-gray-600 mt-2">{desc}</p>
             </motion.div>
           ))}
         </motion.section>
 
-        {/* INTERACTIVE ROLES SHOWCASE (No action buttons) */}
+        {/* WEB PUSH OPT-IN (for PWA / Add to Home Screen) */}
         <motion.section
-          className="bg-white rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-gray-100 p-8 sm:p-12 overflow-hidden relative"
-          variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
+          className="mt-8"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
         >
-          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-gradient-to-bl from-blue-50/50 to-transparent rounded-full blur-3xl pointer-events-none" />
-          
-          <div className="text-center max-w-2xl mx-auto mb-12 relative z-10">
-            <h2 className="text-3xl sm:text-4xl font-bold text-gray-900">Tailored Experiences</h2>
-            <p className="text-gray-600 mt-4 text-lg">Select your role to explore how the platform adapts to your needs.</p>
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-12 relative z-10">
-            {/* Tabs */}
-            <div className="flex lg:flex-col gap-2 overflow-x-auto pb-4 lg:pb-0 lg:w-64 flex-shrink-0 scrollbar-hide">
-              {Object.entries(roleContent).map(([key, data]) => (
-                <button
-                  key={key}
-                  onClick={() => setActiveTab(key)}
-                  className={`flex items-center gap-4 px-6 py-4 rounded-2xl text-left transition-all duration-300 whitespace-nowrap lg:whitespace-normal ${
-                    activeTab === key 
-                      ? `bg-white shadow-md border border-gray-100 transform scale-[1.02]` 
-                      : 'hover:bg-gray-50 text-gray-500'
-                  }`}
-                >
-                  <div className={`transform scale-75 lg:scale-100 ${activeTab === key ? '' : 'opacity-60 grayscale hover:grayscale-0 transition-all'}`}>
-                    {data.icon}
-                  </div>
-                  <span className={`font-semibold text-lg ${activeTab === key ? 'text-gray-900' : ''}`}>
-                    {data.title}
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {/* Content Area */}
-            <div className="flex-1 bg-gray-50 rounded-3xl p-8 sm:p-12 relative overflow-hidden">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeTab}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ duration: 0.3 }}
-                  className="relative z-10"
-                >
-                  <div className={`inline-block px-4 py-1.5 rounded-full bg-gradient-to-r ${roleContent[activeTab].color} text-white text-sm font-medium mb-6`}>
-                    Workflow Highlights
-                  </div>
-                  <div className="space-y-6">
-                    {roleContent[activeTab].steps.map((step, idx) => (
-                      <div key={idx} className="flex gap-5 items-start">
-                        <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white shadow flex items-center justify-center text-gray-900 font-bold text-sm">
-                          {idx + 1}
-                        </div>
-                        <p className="text-gray-700 text-lg pt-0.5">{step}</p>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              </AnimatePresence>
-              
-              {/* Decorative graphic based on tab */}
-              <div className="absolute -bottom-10 -right-10 opacity-5 pointer-events-none transform scale-150">
-                {roleContent[activeTab].icon}
-              </div>
-            </div>
-          </div>
-        </motion.section>
-
-        {/* NOTIFICATIONS / PUSH */}
-        <motion.section variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}>
           <EnableNotifications />
         </motion.section>
 
-        {/* ANDROID DOWNLOAD (Cleaned up) */}
-        {!isInApp && (
-          <motion.section
-            className="relative bg-gray-900 rounded-[2.5rem] overflow-hidden shadow-2xl"
-            variants={fadeInUp} initial="hidden" whileInView="visible" viewport={{ once: true, amount: 0.2 }}
-          >
-            <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1551288049-bebda4e38f71?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center opacity-20 mix-blend-overlay" />
-            <div className="relative z-10 p-10 sm:p-16 flex flex-col md:flex-row items-center justify-between gap-12">
-              <div className="text-center md:text-left">
-                <h3 className="text-3xl font-bold text-white mb-4">Take Transit With You</h3>
-                <p className="text-gray-300 text-lg max-w-xl">
-                  Install the mobile app for a native experience, background tracking, and rich push notifications tailored for your journey.
-                </p>
-                <div className="mt-8 flex flex-col sm:flex-row items-center gap-4 justify-center md:justify-start">
-                  <Link to="/download" className="inline-flex items-center gap-3 px-6 py-4 bg-white/10 hover:bg-white/20 backdrop-blur-md border border-white/20 text-white rounded-2xl shadow-lg transition-all cursor-pointer">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 2l3 6 6 1-4.5 4 1 6L12 17l-5.5 2 1-6L3 9l6-1 3-6z" fill="currentColor"/></svg>
-                    <div className="text-left">
-                      <div className="text-xs text-gray-300 uppercase font-semibold tracking-wider">Download</div>
-                      <div className="font-bold">Android APK</div>
+        {/* REGISTRATION & GUIDES — student / parent / driver */}
+        <motion.section
+          className="grid grid-cols-1 lg:grid-cols-3 gap-8"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
+        >
+          {/* Student registration steps */}
+            <motion.div
+              variants={fadeInUp}
+              className="relative bg-white rounded-[28px] shadow-sm border border-gray-200 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-b from-sky-50/70 to-white pointer-events-none" />
+              <div className="relative p-6 flex flex-col h-full">
+                <div className="w-14 h-14 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center shadow-inner mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.761 0 5-2.462 5-5.5S14.761 1 12 1 7 3.462 7 6.5 9.239 12 12 12zM4 22c0-3.315 3.582-6 8-6s8 2.685 8 6H4z"/></svg>
+                </div>
+                <h3 className="text-lg font-semibold">Student Registration</h3>
+                <p className="text-sm text-gray-600">Create your account and connect to your bus.</p>
+                {/* Vertical steps */}
+                <div className="mt-4 relative">
+                  <div className="absolute left-4 top-8 bottom-0 w-px bg-gray-200" />
+                  {[
+                    'Name and Roll number',
+                    'Email, Phone, Parent phone',
+                    'Bus ID → then choose your Stop',
+                    'Password (Parent uses Roll no)'
+                  ].map((text, i) => (
+                    <div key={i} className="relative flex gap-4 items-start py-2">
+                      <div className="z-10 flex-none w-8 h-8 rounded-full flex items-center justify-center font-semibold text-white bg-blue-600 shadow">{i+1}</div>
+                      <div className="text-sm text-gray-700 pt-1">{text}</div>
                     </div>
-                  </Link>
+                  ))}
+                </div>
+                <div className="mt-5 flex gap-3">
+                  <Link to="/register/student" className="px-4 py-2 bg-blue-600 text-white rounded">Register</Link>
+                  <Link to="/login/student" className="px-4 py-2 border rounded">Login</Link>
                 </div>
               </div>
-              
-              <div className="flex-shrink-0 bg-white/5 p-6 rounded-3xl backdrop-blur-sm border border-white/10">
-                <LogoScannerFlip />
+            </motion.div>
+
+          {/* Parent tracking path */}
+          <motion.div
+            variants={fadeInUp}
+            className="relative bg-white rounded-[28px] shadow-sm border border-gray-200 overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-gradient-to-b from-indigo-50/70 to-white pointer-events-none" />
+            <div className="relative p-6 flex flex-col h-full">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center shadow-inner mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm-7 9a7 7 0 0 1 14 0z"/></svg>
+              </div>
+              <h3 className="text-lg font-semibold">Parent Tracking</h3>
+              <p className="text-sm text-gray-600">Login with parent phone and child’s Roll number.</p>
+              <div className="mt-4 relative">
+                <div className="absolute left-4 top-8 bottom-0 w-px bg-gray-200" />
+                {[
+                  'Open Parent Login',
+                  'Enter Parent phone',
+                  'Enter Roll number (password)',
+                  'View bus on map + ETAs'
+                ].map((text, i) => (
+                  <div key={i} className="relative flex gap-4 items-start py-2">
+                    <div className="z-10 flex-none w-8 h-8 rounded-full flex items-center justify-center font-semibold text-white bg-indigo-600 shadow">{i+1}</div>
+                    <div className="text-sm text-gray-700 pt-1">{text}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5">
+                <Link to="/login/parent" className="px-4 py-2 bg-indigo-600 text-white rounded">Parent Login</Link>
               </div>
             </div>
+          </motion.div>
+
+          {/* Driver registration path */}
+          <motion.div
+            variants={fadeInUp}
+            className="relative bg-white rounded-[28px] shadow-sm border border-gray-200 overflow-hidden"
+          >
+            <div className="absolute inset-0 bg-gradient-to-b from-emerald-50/70 to-white pointer-events-none" />
+            <div className="relative p-6 flex flex-col h-full">
+              <div className="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-inner mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="currentColor"><path d="M4 6a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v10a2 2 0 0 1-2 2v2h-2v-2H8v2H6v-2a2 2 0 0 1-2-2zM7 5h10a1 1 0 0 1 1 1v6H6V6a1 1 0 0 1 1-1z"/></svg>
+              </div>
+              <h3 className="text-lg font-semibold">Driver Onboarding</h3>
+              <p className="text-sm text-gray-600">Apply to join, get approved by admin, and start live updates.</p>
+              <div className="mt-4 relative">
+                <div className="absolute left-4 top-8 bottom-0 w-px bg-gray-200" />
+                {[
+                  'Apply with Name, Phone, Bus ID',
+                  'Admin approval (no self-register)',
+                  'Receive SMS with password',
+                  'Driver Login → Start Sharing'
+                ].map((text, i) => (
+                  <div key={i} className="relative flex gap-4 items-start py-2">
+                    <div className="z-10 flex-none w-8 h-8 rounded-full flex items-center justify-center font-semibold text-white bg-emerald-600 shadow">{i+1}</div>
+                    <div className="text-sm text-gray-700 pt-1">{text}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5">
+                <Link to="/login/driver" className="px-4 py-2 bg-emerald-600 text-white rounded">Driver Login</Link>
+              </div>
+            </div>
+          </motion.div>
+
+          
+        </motion.section>
+        {/* ANDROID DOWNLOAD — simple install steps for mobile users */}
+        {!isInApp && (
+          <motion.section
+            className="bg-white rounded-lg border p-6 shadow-sm"
+            variants={fadeInUp}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true, amount: 0.2 }}
+          >
+          <div className="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+            <div className="md:col-span-2">
+              <h3 className="text-lg font-semibold">Get the CTraX Android app</h3>
+              <p className="text-sm text-gray-600 mt-2">Install the mobile app to receive push alerts, quick access to your child’s bus, and offline map previews.</p>
+              <div className="mt-2 text-sm text-gray-600">
+                <strong>Notifications:</strong> The app delivers push notifications and the dashboard notification features are available only via the mobile app. Install on your Android device to receive arrival alerts and important updates.
+              </div>
+
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:gap-4">
+                <Link to="/download" className="inline-flex items-center gap-3 px-5 py-3 bg-green-600 text-white rounded-lg shadow hover:bg-green-700">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="opacity-90"><path d="M12 2l3 6 6 1-4.5 4 1 6L12 17l-5.5 2 1-6L3 9l6-1 3-6z" fill="currentColor"/></svg>
+                  Download APK (Android)
+                </Link>
+                <a href="https://play.google.com/store/apps" target="_blank" rel="noreferrer" className="mt-3 sm:mt-0 inline-block text-sm text-gray-600">Or find on Google Play (coming soon)</a>
+              </div>
+
+              <ol className="mt-6 space-y-3 text-sm">
+                <li className="flex items-start gap-3">
+                  <div className="flex-none w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-semibold flex items-center justify-center">1</div>
+                  <div>
+                    <div className="font-medium">Download the APK</div>
+                    <div className="text-gray-500">Tap the APK link above and save the file to your device.</div>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <div className="flex-none w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-semibold flex items-center justify-center">2</div>
+                  <div>
+                    <div className="font-medium">Enable installs</div>
+                    <div className="text-gray-500">Go to Settings → Security and allow installs from unknown sources for your browser (temporary).</div>
+                  </div>
+                </li>
+                <li className="flex items-start gap-3">
+                  <div className="flex-none w-8 h-8 rounded-full bg-blue-50 text-blue-600 font-semibold flex items-center justify-center">3</div>
+                  <div>
+                    <div className="font-medium">Install & open</div>
+                    <div className="text-gray-500">Open the downloaded APK and follow on-screen instructions. Grant location permissions for live tracking.</div>
+                  </div>
+                </li>
+              </ol>
+
+              <p className="mt-4 text-xs text-gray-500">Note: APK installs are manual. For the smoothest experience, install from Google Play when available.</p>
+            </div>
+            <div className="flex flex-col items-center justify-center p-4 gap-3">
+              {/* Clickable logo area: shows scanner when tapped */}
+              <LogoScannerFlip />
+            </div>
+          </div>
           </motion.section>
         )}
 
+        <motion.footer
+          className="text-center text-sm text-gray-600"
+          variants={fadeInUp}
+          initial="hidden"
+          whileInView="visible"
+          viewport={{ once: true, amount: 0.2 }}
+        >
+          Connect to a live WebSocket for production real-time updates.
+        </motion.footer>
       </div>
     </div>
   )

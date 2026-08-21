@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
-import { Home, User, Bus, Menu, X, LifeBuoy } from 'lucide-react';
+import { Home, User, Bus, Menu, X } from 'lucide-react';
 import { useI18n } from './i18n/i18n.jsx';
 import LanguageSwitcher from './shared/LanguageSwitcher';
 import LanguagePrompt from './shared/LanguagePrompt';
 import GoogleTranslate from './shared/GoogleTranslate';
-import PremiumIcon from './shared/PremiumIcon';
 import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import StudentDashboard from './pages/StudentDashboard';
 import DriverDashboard from './pages/DriverDashboard';
@@ -23,16 +22,15 @@ import ParentLogin from './pages/auth/ParentLogin';
 import ParentDashboard from './pages/ParentDashboard';
 import AdminLogin from './pages/auth/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
-import AdminNotifications from './pages/AdminNotifications';
 import DriverResetPassword from './pages/auth/DriverResetPassword';
 import StudentResetPassword from './pages/auth/StudentResetPassword';
 import AdminResetPassword from './pages/auth/AdminResetPassword';
-// SeedAdmin removed for production
+import SeedAdmin from './pages/SeedAdmin';
 
 export default function App() {
   const [loading, setLoading] = useState(true);
 
-  // initial loading placeholder (can later tie to API or connection state)
+  // simulate initial loading (can later tie to API or connection state)
   useEffect(() => {
     const timer = setTimeout(() => setLoading(false), 1200);
     return () => clearTimeout(timer);
@@ -104,35 +102,39 @@ export default function App() {
                   to="/"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
-                  <PremiumIcon icon={Home} size={24} color="blue" glow />
+                  <Home className="w-6 h-6" />
                   {t('nav.home')}
                 </Link>
                 <Link
                   to="/login/student"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
-                  <PremiumIcon icon={User} size={24} color="blue" glow />
+                  <User className="w-6 h-6" />
                   {t('nav.student')}
                 </Link>
                 <Link
                   to="/login/parent"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
-                  <PremiumIcon icon={User} size={24} color="purple" glow />
+                  <User className="w-6 h-6" />
                   {t('nav.parent')}
                 </Link>
                 <Link
                   to="/driver"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
-                  <PremiumIcon icon={LifeBuoy} size={24} color="emerald" glow />
+                  <img
+                    src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWxpZmUtYnVveS1pY29uIGx1Y2lkZS1saWZlLWJ1b3kiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PHBhdGggZD0ibTQuOTMgNC45MyA0LjI0IDQuMjQiLz48cGF0aCBkPSJtMTQuODMgOS4xNyA0LjI0LTQuMjQiLz48cGF0aCBkPSJtMTQuODMgMTQuODMgNC4yNCA0LjI0Ii8+PHBhdGggZD0ibTkuMTcgMTQuODMtNC4yNCA0LjI0Ii8+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iNCIvPjwvc3ZnPg=="
+                    alt="Driver"
+                    className="w-6 h-6 object-contain"
+                  />
                   {t('nav.driver')}
                 </Link>
                 <Link
                   to="/account"
                   className="flex items-center gap-2 text-gray-700 hover:text-blue-600 transition-colors text-xl font-semibold"
                 >
-                  <PremiumIcon icon={User} size={24} color="gray" glow />
+                  <User className="w-6 h-6" />
                   {t('nav.account')}
                 </Link>
                 {/* Inline translate dot placed after Account */}
@@ -174,7 +176,7 @@ export default function App() {
                     className="flex items-center gap-3 text-gray-700 hover:text-blue-600 text-xl font-medium"
                     onClick={() => setMenuOpen(false)}
                   >
-                    <PremiumIcon icon={Home} size={24} color="blue" glow />
+                    <Home className="w-6 h-6" />
                     {t('nav.home')}
                   </Link>
                   <Link
@@ -182,7 +184,7 @@ export default function App() {
                     className="flex items-center gap-3 text-gray-700 hover:text-blue-600 text-xl font-medium"
                     onClick={() => setMenuOpen(false)}
                   >
-                    <PremiumIcon icon={User} size={24} color="blue" glow />
+                    <User className="w-6 h-6" />
                     {t('nav.student')}
                   </Link>
                   <Link
@@ -190,7 +192,7 @@ export default function App() {
                     className="flex items-center gap-3 text-gray-700 hover:text-blue-600 text-xl font-medium"
                     onClick={() => setMenuOpen(false)}
                   >
-                    <PremiumIcon icon={User} size={24} color="purple" glow />
+                    <User className="w-6 h-6" />
                     {t('nav.parent')}
                   </Link>
                   <Link
@@ -198,7 +200,11 @@ export default function App() {
                     className="flex items-center gap-3 text-gray-700 hover:text-blue-600 text-xl font-medium"
                     onClick={() => setMenuOpen(false)}
                   >
-                    <PremiumIcon icon={LifeBuoy} size={24} color="emerald" glow />
+                    <img
+                      src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9ImN1cnJlbnRDb2xvciIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIGNsYXNzPSJsdWNpZGUgbHVjaWRlLWxpZmUtYnVveS1pY29uIGx1Y2lkZS1saWZlLWJ1b3kiPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTIiIHI9IjEwIi8+PHBhdGggZD0ibTQuOTMgNC45MyA0LjI0IDQuMjQiLz48cGF0aCBkPSJtMTQuODMgOS4xNyA0LjI0LTQuMjQiLz48cGF0aCBkPSJtMTQuODMgMTQuODMgNC4yNCA0LjI0Ii8+PHBhdGggZD0ibTkuMTcgMTQuODMtNC4yNCA0LjI0Ii8+PGNpcmNsZSBjeD0iMTIiIGN5PSIxMiIgcj0iNCIvPjwvc3ZnPg=="
+                      alt="Driver"
+                      className="w-6 h-6 object-contain"
+                    />
                     {t('nav.driver')}
                   </Link>
                   <Link
@@ -206,7 +212,7 @@ export default function App() {
                     className="flex items-center gap-3 text-gray-700 hover:text-blue-600 text-xl font-medium"
                     onClick={() => setMenuOpen(false)}
                   >
-                    <PremiumIcon icon={User} size={24} color="gray" glow />
+                    <User className="w-6 h-6" />
                     {t('nav.account')}
                   </Link>
                 </div>
@@ -230,11 +236,11 @@ export default function App() {
             <Route path="/login/parent" element={<ParentLogin />} />
             <Route path="/login/admin" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminDashboard />} />
-            <Route path="/admin/notify" element={<AdminNotifications />} />
             <Route path="/reset/driver" element={<DriverResetPassword />} />
             <Route path="/reset/student" element={<StudentResetPassword />} />
             <Route path="/reset/admin" element={<AdminResetPassword />} />
-            {/* Seed route removed for production */}
+            {/* One-time seed route — remove after use */}
+            <Route path="/__seed_admin" element={<SeedAdmin />} />
             <Route path="/account" element={<Account />} />
             <Route path="/download" element={<Download />} />
             <Route path="/privacy" element={<Privacy />} />
