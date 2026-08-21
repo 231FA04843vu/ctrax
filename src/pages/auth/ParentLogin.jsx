@@ -1,9 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { loginParent } from '../../utils/auth'
+import { loginParent, getSession } from '../../utils/auth'
 
 export default function ParentLogin(){
   const nav = useNavigate()
+  
+  // Auto-redirect if already logged in
+  useEffect(() => {
+    const session = getSession()
+    if (session?.role === 'parent') nav('/parent')
+  }, [nav])
+
   const [form, setForm] = useState({ parentPhone: '', rollNo: '' })
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)

@@ -1,9 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { login } from '../../utils/auth'
+import { login, getSession } from '../../utils/auth'
 
 export default function AdminLogin(){
   const nav = useNavigate()
+  
+  // Auto-redirect if already logged in
+  useEffect(() => {
+    const session = getSession()
+    if (session?.role === 'admin') nav('/admin')
+  }, [nav])
+
   const [form, setForm] = useState({ email: '', password: '' })
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
