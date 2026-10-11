@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { buildRouteForNow, haversineKm } from '../utils/routeLogic'
+import { buildRouteForNow, haversineKm, distanceToPolylineKm } from '../utils/routeLogic'
 import { onStopsFor } from '../utils/routeData'
 import { getBusFor, onBusFor } from '../utils/busData'
 import { getLastGoodPosition } from '../utils/geolocation'
@@ -121,7 +121,7 @@ const collegeIcon = () => L.divIcon({
   iconAnchor: [24, 36]
 })
 
-export default function MapView({ role = 'student', sharing = false, busId = null, highlightStopName = '' }) {
+export default function MapView({ role = 'student', sharing = false, busId = null, highlightStopName = '', onDeviation = null }) {
 
 // Special icon for the student's own stop
 const myStopIcon = () => L.divIcon({
@@ -261,26 +261,17 @@ const myStopIcon = () => L.divIcon({
   // Detect deviation from the rendered routePoints
   useEffect(() => {
     if (!bus?.position || !isValidLatLng(bus.position) || !routePoints || routePoints.length < 2) return
-    import('../utils/routeLogic').then(({ distanceToPolylineKm }) => {
-      const dist = distanceToPolylineKm(bus.position, routePoints)
-      // 100 meters deviation threshold
-      if (dist > 0.1) {
-        // Only set it once to avoid infinite loops, or if it moved significantly from previous deviation
-        setLiveDeviationPos(prev => {
-          if (!prev) {
-            if (onDeviation) onDeviation(bus.position)
-            return bus.position
-          }
-          const { haversineKm } = require('../utils/routeLogic')
-          if (haversineKm(prev, bus.position) > 0.05) {
-            if (onDeviation) onDeviation(bus.position)
-            return bus.position // Update if moved > 50m since last deviation
-          }
-          return prev
-        })
+    const dist = distanceToPolylineKm(bus.position, routePoints)
+    // 100 meters deviation threshold
+    if (dist > 0.1) {
+      if (!liveDeviationPos || haversineKm(liveDeviationPos, bus.position) > 0.05) {
+        setLiveDeviationPos(bus.position)
+        if (typeof onDeviation === 'function') {
+          onDeviation(bus.position)
+        }
       }
-    })
-  }, [bus?.position, routePoints])
+    }
+  }, [bus?.position, routePoints, liveDeviationPos, onDeviation])
 
   // Show one-time hints for Start and Destination popups on first view
   useEffect(() => {
