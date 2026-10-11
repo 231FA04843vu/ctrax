@@ -12,28 +12,32 @@ export default function Landing() {
   // Banner slider data
   const banners = useMemo(() => ([
     {
+      badge: 'cTraX Live GPS',
       title: 'Track your college bus live',
-      subtitle: 'Accurate ETAs, clear maps, and smooth experience',
-      img: 'https://source.unsplash.com/1600x700/?school-bus,students',
-      fallback: '/banners/bus-live.svg',
+      subtitle: 'Accurate real-time ETAs, dynamic map routes, and live tracking',
+      img: '/banners/ctrax-live-tracking.jpg',
+      fallback: '/banners/ctrax-live-tracking.jpg',
     },
     {
-      title: 'Parents stay informed',
-      subtitle: 'Arrival alerts and delay notifications',
-      img: 'https://source.unsplash.com/1600x700/?gps,smartphone,map',
-      fallback: '/banners/parent-alerts.svg',
+      badge: 'cTraX Parent Radar',
+      title: 'Parents stay informed & assured',
+      subtitle: 'Instant arrival alerts, pickup radar, and delay notifications',
+      img: '/banners/ctrax-parent-alerts.jpg',
+      fallback: '/banners/ctrax-parent-alerts.jpg',
     },
     {
-      title: 'Driver-friendly tools',
-      subtitle: 'One tap to start sharing and follow the route',
-      img: 'https://source.unsplash.com/1600x700/?bus,driver,cabin',
-      fallback: '/banners/driver-tools.svg',
+      badge: 'cTraX Driver Suite',
+      title: 'Smart tools for every driver',
+      subtitle: 'One-tap route sharing, turn guidance, and live student attendance',
+      img: '/banners/ctrax-driver-tools.jpg',
+      fallback: '/banners/ctrax-driver-tools.jpg',
     },
     {
-      title: 'Transit that scales',
-      subtitle: 'City buses, campus shuttles, and intercity fleets',
-      img: 'https://source.unsplash.com/1600x700/?city-bus,transit',
-      fallback: '/banners/transit-scalable.svg',
+      badge: 'cTraX Fleet Enterprise',
+      title: 'Transit that scales across campuses',
+      subtitle: 'College shuttles, route optimization, and multi-bus fleet management',
+      img: '/banners/ctrax-fleet-transit.jpg',
+      fallback: '/banners/ctrax-fleet-transit.jpg',
     },
   ]), [])
   const [slide, setSlide] = useState(0)
@@ -107,7 +111,7 @@ export default function Landing() {
                       src={b.img}
                       alt={b.title}
                       className="absolute inset-0 w-full h-full object-cover"
-                      loading="lazy"
+                      loading={i === 0 ? "eager" : "lazy"}
                       onError={(e) => {
                         const el = e.currentTarget
                         if (el.dataset.fb !== '1' && b.fallback){
@@ -116,12 +120,15 @@ export default function Landing() {
                         }
                       }}
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-black/10 to-transparent" />
-                    <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-6">
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/25 to-transparent" />
+                    <div className="absolute bottom-0 left-0 right-0 p-4 sm:p-6 md:p-8">
                       <div className="max-w-4xl">
-                        <div className="inline-block bg-white/80 backdrop-blur px-3 py-1 rounded-full text-xs font-medium text-gray-800 mb-2">Campus transit</div>
-                        <h3 className="text-white text-xl sm:text-2xl md:text-3xl font-bold drop-shadow">{b.title}</h3>
-                        <p className="text-white/90 text-sm sm:text-base drop-shadow mt-1">{b.subtitle}</p>
+                        <div className="inline-flex items-center gap-2 bg-white/90 backdrop-blur-md px-3 py-1 rounded-full text-xs font-semibold text-gray-900 mb-2 shadow-sm border border-white/40">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                          <span>{b.badge || 'Campus transit'}</span>
+                        </div>
+                        <h3 className="text-white text-xl sm:text-2xl md:text-3xl lg:text-4xl font-extrabold drop-shadow tracking-tight">{b.title}</h3>
+                        <p className="text-white/90 text-sm sm:text-base md:text-lg drop-shadow mt-1 max-w-2xl font-medium">{b.subtitle}</p>
                       </div>
                     </div>
                   </div>
